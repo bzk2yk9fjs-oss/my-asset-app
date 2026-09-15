@@ -5,6 +5,8 @@ import gspread
 import json
 import plotly.express as px
 import streamlit.components.v1 as components
+import requests
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
@@ -30,6 +32,22 @@ def get_category(ticker):
     elif ticker in ['IBM', 'SPCX', 'GOOGL']: return '우량주 (Blue Chip)'
     elif ticker in ['RGTI', 'ARQQ']: return '모험주 (Adventure)'
     else: return '기타 (Others)'
+
+# --- [신규 기능] 우주방어 크롤링 함수 (공포탐욕지수 가져오기) ---
+def get_fear_and_greed():
+    try:
+        url = "https://edition.cnn.com/markets/fear-and-greed"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            # CNN 지수 페이지의 핵심 숫자가 담긴 클래스 탐색
+            div = soup.find("div", {"class": "market-fng-gauge__dial-number"})
+            if div:
+                return div.get_text(strip=True)
+    except:
+        pass
+    return "데이터 수집 원활하지 않음 (링크 참고)"
 
 df_trades = load_data()
 
@@ -71,22 +89,19 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    # [버그 수정] 분봉 데이터(interval="1m")로 실시간 프리마켓 가격 가져오기!
                     live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    daily_data = yf.Ticker(ticker).history(period="5d") # 전일 종가 비교용
+                    daily_data = yf.Ticker(ticker).history(period="5d")
                     
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
-                        prev_close = daily_data['Close'].iloc[-2] # 어제 장마감 종가
+                        prev_close = daily_data['Close'].iloc[-2]
                         
-                        # --- 시장 시간 캡처 (한국 시간 표출) ---
                         if not time_captured:
                             last_time = live_data.index[-1]
                             if last_time.tzinfo is None:
                                 ny_time = last_time.tz_localize('UTC').tz_convert('America/New_York')
                             else:
                                 ny_time = last_time.tz_convert('America/New_York')
-                                
                             kr_time = ny_time.tz_convert('Asia/Seoul')
                                 
                             t_val = ny_time.hour + ny_time.minute / 60.0
@@ -200,13 +215,16 @@ else:
         )
         
         st.divider()
-        st.markdown("### 2. Fear and Greed Index (공포와 탐욕 지수)")
-        st.write("현재 시장 참여자들의 심리 상태를 보여줍니다.")
-        st.info("※ 해당 금융사의 보안 정책으로 앱 내 직접 표출이 차단되었습니다. 아래 링크를 이용해 주세요.")
-        st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
+        st.markdown("### 2. Fear & Greed Index (실시간 크롤링 요약)")
+        st.write("시장 참여자들의 실시간 공포와 탐욕 지수입니다.")
+        
+        # 크롤링 결과 출력 (우주방어 try-except 적용)
+        fng_value = get_fear_and_greed()
+        st.metric(label="현재 공포와 탐욕 지수 (CNN)", value=f"{fng_value}점")
+        st.markdown("👉 [원문 사이트 직접 확인하기](https://edition.cnn.com/markets/fear-and-greed)")
         
         st.divider()
-        st.markdown("### 3. CME FedWatch Tool (금리 예측)")
-        st.write("미 연준(Fed)의 다음 기준금리 결정 확률을 실시간으로 추적합니다.")
-        st.info("※ 해당 금융사의 보안 정책으로 앱 내 직접 표출이 차단되었습니다. 아래 링크를 이용해 주세요.")
-        st.markdown("👉 **[🔗 CME FedWatch Tool 실시간 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
+        st.markdown("### 3. CME FedWatch Tool (금리 예측 참고)")
+        st.write("미 연준(Fed) 금리 확률 데이터는 CME사의 자바스크립트 보안 방화벽이 매우 강력하여 직접 크롤링 시 앱이 멈출 위험이 있습니다.")
+        st.info("💡 **안전 안내:** 금리 예측 데이터는 아래 공식 툴에서 실시간으로 확인하시는 것을 추천합니다.")
+        st.markdown("👉 **[🔗 CME FedWatch Tool 바로가기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
