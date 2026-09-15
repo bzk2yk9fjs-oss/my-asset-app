@@ -22,13 +22,13 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-# 2. 종목별 자산군 분류 (한결님 맞춤형 그룹핑)
+# 2. 종목별 자산군 분류 (한결님 맞춤형 그룹핑 업데이트 반영!)
 def get_category(ticker):
     ticker = ticker.upper()
-    if ticker in ['VOO']: return '코어 (Core)'
-    elif ticker in ['SGOV', 'KO', 'NEE']: return '방어/현금성 (Defensive)'
-    elif ticker in ['GOOGL', 'IBM', 'BAC', 'LMT']: return '우량주 (Blue Chip)'
-    elif ticker in ['RGTI', 'ARQQ', 'SPCX']: return '모험주 (Adventure)'
+    if ticker in ['VOO', 'SGOV']: return '코어 (Core)'
+    elif ticker in ['KO', 'BAC', 'NEE', 'LMT']: return '방어 (Defensive)'
+    elif ticker in ['IBM', 'SPCX', 'GOOGL']: return '우량주 (Blue Chip)'
+    elif ticker in ['RGTI', 'ARQQ']: return '모험주 (Adventure)'
     else: return '기타 (Others)'
 
 df_trades = load_data()
@@ -107,7 +107,7 @@ else:
             if results:
                 df = pd.DataFrame(results)
                 
-                # --- [Q1] 리스크 한눈에 보기: 그룹별 자산군 차트 ---
+                # --- 리스크 한눈에 보기: 그룹별 자산군 차트 ---
                 st.subheader("📊 포트폴리오 자산군 리스크 배분 현황")
                 
                 # 평가액 기준으로 자산군 파이 차트 그리기
@@ -119,16 +119,15 @@ else:
                 
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 데이터 표 (아이폰에서 보기 좋게 소수점 포맷팅)
+                # 데이터 표
                 st.dataframe(df.drop(columns=['일일 변동율']), use_container_width=True, hide_index=True)
                 
                 st.divider()
                 
-                # --- [Q3] 3단계 자동 시황 브리핑 시스템 ---
+                # --- 3단계 자동 시황 브리핑 시스템 ---
                 st.subheader("🤖 일일 3단계 시황 브리핑 리포트")
                 
                 if len(df) > 0:
-                    # 오늘 가장 많이 변동한 종목 찾기
                     top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
                     top_ticker = top_mover['종목']
                     top_change = top_mover['일일 변동율']
@@ -141,7 +140,7 @@ else:
                         news = yf.Ticker(top_ticker).news
                         if news:
                             st.write(f"**[{top_ticker} 관련 최신 주요 뉴스]**")
-                            for n in news[:2]: # 최근 뉴스 2개만 요약
+                            for n in news[:2]:
                                 st.write(f"- [{n['title']}]({n['link']})")
                         else:
                             st.write(f"{top_ticker}에 대한 주요 영문 뉴스가 오늘 보고되지 않았습니다.")
@@ -157,7 +156,7 @@ else:
                         st.warning(f"✔️ **검증:** {top_ticker}의 현재 변동은 특이사항 없는 일반적인 시장 노이즈(보합세) 범위 내에 있습니다.")
 
     with tab2:
-        # --- [Q2] 매크로 지표 상황판 ---
+        # --- 매크로 지표 상황판 ---
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
         st.write("시장의 큰 흐름을 읽는 핵심 지표 모음입니다. (스크롤하여 확인)")
         
