@@ -22,7 +22,7 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-# 2. 종목별 자산군 분류 (맞춤형 그룹핑)
+# 2. 종목별 자산군 분류
 def get_category(ticker):
     ticker = ticker.upper()
     if ticker in ['VOO', 'SGOV']: return '코어 (Core)'
@@ -36,11 +36,9 @@ df_trades = load_data()
 if df_trades.empty:
     st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
 else:
-    # 탭 구성: 자산 현황 / 매크로 지표
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드 (3단계 브리핑)", "🌍 매크로 종합 상황판"])
     
     with tab1:
-        # 매매 기록 계산 로직
         portfolio = {}
         for _, row in df_trades.iterrows():
             ticker = str(row['종목']).strip().upper()
@@ -73,20 +71,24 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    stock_data = yf.Ticker(ticker).history(period="5d", prepost=True)
-                    if len(stock_data) >= 2:
-                        current_price = stock_data['Close'].iloc[-1]
-                        prev_close = stock_data['Close'].iloc[-2]
+                    # [버그 수정] 분봉 데이터(interval="1m")로 실시간 프리마켓 가격 가져오기!
+                    live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
+                    daily_data = yf.Ticker(ticker).history(period="5d") # 전일 종가 비교용
+                    
+                    if len(live_data) > 0 and len(daily_data) >= 2:
+                        current_price = live_data['Close'].iloc[-1]
+                        prev_close = daily_data['Close'].iloc[-2] # 어제 장마감 종가
                         
-                        # --- [신규 기능] 시장 시간 및 장 상태 캡처 ---
+                        # --- 시장 시간 캡처 (한국 시간 표출) ---
                         if not time_captured:
-                            last_time = stock_data.index[-1]
+                            last_time = live_data.index[-1]
                             if last_time.tzinfo is None:
                                 ny_time = last_time.tz_localize('UTC').tz_convert('America/New_York')
                             else:
                                 ny_time = last_time.tz_convert('America/New_York')
                                 
-                            # 뉴욕 시간 기준으로 장 구분 계산
+                            kr_time = ny_time.tz_convert('Asia/Seoul')
+                                
                             t_val = ny_time.hour + ny_time.minute / 60.0
                             if 4.0 <= t_val < 9.5:
                                 m_state = "🟡 프리마켓 (Pre-market)"
@@ -97,7 +99,7 @@ else:
                             else:
                                 m_state = "⚫ 장 마감 (Closed)"
                                 
-                            market_time_info = f"🕒 **데이터 기준 시점:** {ny_time.strftime('%Y년 %m월 %d일 %H:%M')} (미국 뉴욕 시간) | **현재 상태:** {m_state}"
+                            market_time_info = f"🕒 **데이터 기준 시점:** {kr_time.strftime('%Y년 %m월 %d일 %H:%M')} (한국 시간) | **현재 상태:** {m_state}"
                             time_captured = True
                         
                         value = current_price * shares
@@ -120,8 +122,7 @@ else:
                         })
                 except: pass
             
-            # 메인 지표 출력 부분
-            st.info(market_time_info) # 방금 캡처한 시장 시간 정보를 맨 위에 눈에 띄게 출력
+            st.info(market_time_info)
             
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
             col1, col2 = st.columns(2)
@@ -133,9 +134,7 @@ else:
             if results:
                 df = pd.DataFrame(results)
                 
-                # --- 리스크 한눈에 보기: 그룹별 자산군 차트 ---
                 st.subheader("📊 포트폴리오 자산군 리스크 배분 현황")
-                
                 fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
@@ -146,7 +145,6 @@ else:
                 
                 st.divider()
                 
-                # --- 3단계 자동 시황 브리핑 시스템 ---
                 st.subheader("🤖 일일 3단계 시황 브리핑 리포트")
                 
                 if len(df) > 0:
@@ -171,7 +169,6 @@ else:
                         st.warning(f"✔️ **검증:** {top_ticker}의 현재 변동은 특이사항 없는 일반적인 시장 노이즈(보합세) 범위 내에 있습니다.")
 
     with tab2:
-        # --- 매크로 지표 상황판 ---
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
         
         st.markdown("### 1. S&P 500 섹터 히트맵 (TradingView)")
