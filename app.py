@@ -3,150 +3,174 @@ import yfinance as yf
 import pandas as pd
 import gspread
 import json
+import plotly.express as px
+import streamlit.components.v1 as components
 
-st.set_page_config(page_title="한결 포트폴리오", layout="wide")
+st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
-st.title("📊 자산관리 대시보드")
-st.write("구글 시트의 매매 기록을 바탕으로 내 자산을 실시간 계산합니다.")
+st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
+st.write("구글 시트 기반 자동화 포트폴리오 및 3단계 시황 브리핑 시스템")
 
-# 1. 구글 시트 연동 (1분마다 최신화되도록 설정)
+# 1. 구글 시트 연동
 @st.cache_data(ttl=60)
 def load_data():
     try:
-        # 금고(secrets)에서 암호를 꺼내서 구글에 로그인
         creds_dict = json.loads(st.secrets["google_credentials"])
         gc = gspread.service_account_from_dict(creds_dict)
-        
-        # '내 주식 장부' 파일 열기
-        doc = gc.open("내 주식 장부")
-        sheet = doc.sheet1
-        data = sheet.get_all_records()
-        return pd.DataFrame(data)
+        sheet = gc.open("내 주식 장부").sheet1
+        return pd.DataFrame(sheet.get_all_records())
     except Exception as e:
-        st.error(f"구글 시트 연결 오류가 발생했습니다: {e}")
         return pd.DataFrame()
+
+# 2. 종목별 자산군 분류 (한결님 맞춤형 그룹핑)
+def get_category(ticker):
+    ticker = ticker.upper()
+    if ticker in ['VOO']: return '코어 (Core)'
+    elif ticker in ['SGOV', 'KO', 'NEE']: return '방어/현금성 (Defensive)'
+    elif ticker in ['GOOGL', 'IBM', 'BAC', 'LMT']: return '우량주 (Blue Chip)'
+    elif ticker in ['RGTI', 'ARQQ', 'SPCX']: return '모험주 (Adventure)'
+    else: return '기타 (Others)'
 
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("구글 시트에서 데이터를 불러오지 못했거나 장부가 비어있습니다. '내 주식 장부' 시트를 확인해 주세요.")
+    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
 else:
-    # 2. 매매 기록을 바탕으로 보유 수량 및 평단가 자동 계산!
-    portfolio = {}
-    for index, row in df_trades.iterrows():
-        ticker = str(row['종목']).strip().upper()
-        trade_type = str(row['구분']).strip()
-        
-        try:
-            qty = float(row['수량'])
-            price = float(row['가격($)'])
-        except:
-            continue # 숫자가 아닌 빈칸 등이 있으면 안전하게 건너뜀
-            
-        if ticker not in portfolio:
-            portfolio[ticker] = {'수량': 0.0, '총투자금': 0.0}
-            
-        if trade_type == '매수':
-            portfolio[ticker]['수량'] += qty
-            portfolio[ticker]['총투자금'] += (qty * price)
-        elif trade_type == '매도':
-            if portfolio[ticker]['수량'] > 0:
+    # 탭 구성: 자산 현황 / 매크로 지표
+    tab1, tab2 = st.tabs(["💰 내 자산 대시보드 (3단계 브리핑)", "🌍 매크로 종합 상황판"])
+    
+    with tab1:
+        # 매매 기록 계산 로직
+        portfolio = {}
+        for _, row in df_trades.iterrows():
+            ticker = str(row['종목']).strip().upper()
+            trade_type = str(row['구분']).strip()
+            try:
+                qty, price = float(row['수량']), float(row['가격($)'])
+            except: continue
+                
+            if ticker not in portfolio: portfolio[ticker] = {'수량': 0.0, '총투자금': 0.0}
+                
+            if trade_type == '매수':
+                portfolio[ticker]['수량'] += qty
+                portfolio[ticker]['총투자금'] += (qty * price)
+            elif trade_type == '매도' and portfolio[ticker]['수량'] > 0:
                 avg_price = portfolio[ticker]['총투자금'] / portfolio[ticker]['수량']
                 portfolio[ticker]['수량'] -= qty
                 portfolio[ticker]['총투자금'] -= (qty * avg_price)
 
-    # 수량이 0보다 큰(보유 중인) 종목만 화면에 남기기
-    portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
+        portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
+        
+        with st.spinner('실시간 시세와 차트를 렌더링 중입니다...'):
+            total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
+            results = []
+            
+            for ticker, info in portfolio.items():
+                shares = info['수량']
+                avg_price = info['총투자금'] / shares
+                category = get_category(ticker)
+                
+                try:
+                    stock_data = yf.Ticker(ticker).history(period="5d", prepost=True)
+                    if len(stock_data) >= 2:
+                        current_price = stock_data['Close'].iloc[-1]
+                        prev_close = stock_data['Close'].iloc[-2]
+                        
+                        value = current_price * shares
+                        change_dollar = (current_price - prev_close) * shares
+                        return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
+                        
+                        total_value += value
+                        total_invested += info['총투자금']
+                        total_daily_change += change_dollar
+                        
+                        results.append({
+                            "종목": ticker,
+                            "그룹": category,
+                            "보유 수량": shares,
+                            "평단가": avg_price,
+                            "현재가": current_price,
+                            "수익률 (%)": return_percent,
+                            "평가액 ($)": value,
+                            "일일 변동율": ((current_price - prev_close) / prev_close) * 100
+                        })
+                except: pass
+            
+            # 메인 지표 출력
+            total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+            col1, col2 = st.columns(2)
+            col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:,.2f} USD")
+            col2.metric("총 누적 수익률", f"{total_all_time_return:.2f}%", f"누적 총 손익: ${(total_value - total_invested):,.2f}")
+            
+            st.divider()
+            
+            if results:
+                df = pd.DataFrame(results)
+                
+                # --- [Q1] 리스크 한눈에 보기: 그룹별 자산군 차트 ---
+                st.subheader("📊 포트폴리오 자산군 리스크 배분 현황")
+                
+                # 평가액 기준으로 자산군 파이 차트 그리기
+                fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                # 아이폰 화면에 꽉 차게 설정
+                fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # 데이터 표 (아이폰에서 보기 좋게 소수점 포맷팅)
+                st.dataframe(df.drop(columns=['일일 변동율']), use_container_width=True, hide_index=True)
+                
+                st.divider()
+                
+                # --- [Q3] 3단계 자동 시황 브리핑 시스템 ---
+                st.subheader("🤖 일일 3단계 시황 브리핑 리포트")
+                
+                if len(df) > 0:
+                    # 오늘 가장 많이 변동한 종목 찾기
+                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
+                    top_ticker = top_mover['종목']
+                    top_change = top_mover['일일 변동율']
+                    
+                    st.markdown("#### 1단계: 실시간 가격 확인")
+                    st.info(f"오늘 포트폴리오 내 최대 변동 종목은 **{top_ticker}** 입니다. (전일 대비 **{top_change:+.2f}%** 변동)")
+                    
+                    st.markdown("#### 2단계: 뉴스 매칭")
+                    try:
+                        news = yf.Ticker(top_ticker).news
+                        if news:
+                            st.write(f"**[{top_ticker} 관련 최신 주요 뉴스]**")
+                            for n in news[:2]: # 최근 뉴스 2개만 요약
+                                st.write(f"- [{n['title']}]({n['link']})")
+                        else:
+                            st.write(f"{top_ticker}에 대한 주요 영문 뉴스가 오늘 보고되지 않았습니다.")
+                    except:
+                        st.write("뉴스를 불러오지 못했습니다.")
+                        
+                    st.markdown("#### 3단계: 정합성 검증 (Verification)")
+                    if top_change > 3.0:
+                        st.success(f"✔️ **검증:** {top_ticker}의 +3% 이상 급등은 강한 매수세 또는 호재 뉴스와 일치할 확률이 높습니다. 단기 과열 여부만 체크하세요.")
+                    elif top_change < -3.0:
+                        st.error(f"⚠️ **검증:** {top_ticker}의 -3% 이상 급락 발생! 2단계 뉴스에서 악재(실적 미달, 매크로 충격 등)를 반드시 교차 검증해야 합니다.")
+                    else:
+                        st.warning(f"✔️ **검증:** {top_ticker}의 현재 변동은 특이사항 없는 일반적인 시장 노이즈(보합세) 범위 내에 있습니다.")
 
-    # 3. 실시간 주가 반영 및 화면 출력
-    st.subheader("💰 실시간 내 자산 현황")
-    
-    with st.spinner('실시간 자산 가치를 계산하는 중입니다...'):
-        total_value = 0.0
-        total_invested = 0.0
-        total_daily_change = 0.0
-        results = []
+    with tab2:
+        # --- [Q2] 매크로 지표 상황판 ---
+        st.subheader("🌍 매크로 경제 지표 종합 대시보드")
+        st.write("시장의 큰 흐름을 읽는 핵심 지표 모음입니다. (스크롤하여 확인)")
         
-        for ticker, info in portfolio.items():
-            shares = info['수량']
-            if shares <= 0:
-                continue
-            avg_price = info['총투자금'] / shares
-            
-            try:
-                stock_data = yf.Ticker(ticker).history(period="5d", prepost=True)
-                if len(stock_data) >= 2:
-                    current_price = stock_data['Close'].iloc[-1]
-                    prev_close = stock_data['Close'].iloc[-2]
-                    
-                    value = current_price * shares
-                    change_dollar = (current_price - prev_close) * shares
-                    
-                    total_value += value
-                    total_invested += info['총투자금']
-                    total_daily_change += change_dollar
-                    
-                    # 새로운 항목: 내 평단가 대비 수익률 계산
-                    return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
-                    
-                    results.append({
-                        "종목": ticker,
-                        "보유 수량": shares,
-                        "평단가": avg_price,
-                        "현재가": current_price,
-                        "수익률": return_percent,
-                        "평가액": value
-                    })
-            except Exception:
-                pass
-        
-        for row in results:
-            row["비중"] = (row["평가액"] / total_value) * 100 if total_value > 0 else 0
-            
-        base_value = total_value - total_daily_change
-        total_change_percent = (total_daily_change / base_value) * 100 if base_value > 0 else 0
-        
-        # 총 투자금 대비 총 평가액의 누적 수익률
-        total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
-        
-        # 메인 지표 출력 (오늘의 변동과 누적 손익을 두 칸으로 나누어 보여줌!)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric(
-                label="총 자산 평가액 (USD)", 
-                value=f"${total_value:,.2f}",
-                delta=f"오늘의 변동: {total_daily_change:,.2f} ({total_change_percent:.2f}%)"
-            )
-        with col2:
-            st.metric(
-                label="총 누적 수익률", 
-                value=f"{total_all_time_return:.2f}%",
-                delta=f"총 누적 손익: ${(total_value - total_invested):,.2f}"
-            )
+        st.markdown("### 1. S&P 500 섹터 히트맵")
+        st.write("미국 증시 전반의 붉고 푸른 흐름을 직관적으로 확인하세요.")
+        components.iframe("https://finviz.com/map.ashx?t=sec", height=500, scrolling=True)
         
         st.divider()
+        st.markdown("### 2. Fear and Greed Index (공포와 탐욕 지수)")
+        st.write("현재 시장 참여자들의 심리 상태를 보여줍니다. 극단적 공포는 기회, 극단적 탐욕은 리스크 관리를 의미합니다.")
+        st.markdown("👉 **[CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
         
-        if results:
-            df = pd.DataFrame(results)
-            df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
-            
-            st.dataframe(
-                df,
-                use_container_width=True,
-                column_config={
-                    "종목": st.column_config.TextColumn("종목명"),
-                    "보유 수량": st.column_config.NumberColumn("수량", format="%.2f"),
-                    "평단가": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
-                    "현재가": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
-                    "수익률": st.column_config.NumberColumn("누적 수익률 (%)", format="%.2f%%"),
-                    "평가액": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
-                    "비중": st.column_config.ProgressColumn(
-                        "비중 (%)",
-                        format="%.2f%%",
-                        min_value=0,
-                        max_value=100,
-                    ),
-                }
-            )
-
-st.caption("데이터 출처: Yahoo Finance / 매매 장부: 구글 스프레드시트 연동")
+        st.divider()
+        st.markdown("### 3. CME FedWatch Tool (금리 예측)")
+        st.write("미 연준(Fed)의 다음 기준금리 결정에 대한 시장의 예측 확률을 실시간으로 추적합니다.")
+        st.markdown("👉 **[CME FedWatch Tool 실시간 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
