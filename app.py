@@ -64,6 +64,8 @@ else:
         with st.spinner('실시간 시세와 차트를 렌더링 중입니다...'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
+            market_time_info = "가격 정보를 불러오는 중입니다..."
+            time_captured = False
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -75,6 +77,28 @@ else:
                     if len(stock_data) >= 2:
                         current_price = stock_data['Close'].iloc[-1]
                         prev_close = stock_data['Close'].iloc[-2]
+                        
+                        # --- [신규 기능] 시장 시간 및 장 상태 캡처 ---
+                        if not time_captured:
+                            last_time = stock_data.index[-1]
+                            if last_time.tzinfo is None:
+                                ny_time = last_time.tz_localize('UTC').tz_convert('America/New_York')
+                            else:
+                                ny_time = last_time.tz_convert('America/New_York')
+                                
+                            # 뉴욕 시간 기준으로 장 구분 계산
+                            t_val = ny_time.hour + ny_time.minute / 60.0
+                            if 4.0 <= t_val < 9.5:
+                                m_state = "🟡 프리마켓 (Pre-market)"
+                            elif 9.5 <= t_val < 16.0:
+                                m_state = "🟢 본장 (Regular Market)"
+                            elif 16.0 <= t_val < 20.0:
+                                m_state = "🔵 애프터마켓 (After-hours)"
+                            else:
+                                m_state = "⚫ 장 마감 (Closed)"
+                                
+                            market_time_info = f"🕒 **데이터 기준 시점:** {ny_time.strftime('%Y년 %m월 %d일 %H:%M')} (미국 뉴욕 시간) | **현재 상태:** {m_state}"
+                            time_captured = True
                         
                         value = current_price * shares
                         change_dollar = (current_price - prev_close) * shares
@@ -96,7 +120,9 @@ else:
                         })
                 except: pass
             
-            # 메인 지표 출력
+            # 메인 지표 출력 부분
+            st.info(market_time_info) # 방금 캡처한 시장 시간 정보를 맨 위에 눈에 띄게 출력
+            
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
             col1, col2 = st.columns(2)
             col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:,.2f} USD")
