@@ -5,11 +5,24 @@ import gspread
 import json
 import plotly.express as px
 import streamlit.components.v1 as components
+import datetime
+import pytz
 
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
 st.write("구글 시트 기반 자동화 포트폴리오 및 3단계 시황 브리핑 시스템")
+
+# [Helper] 컬러 텍스트 포맷터 (텍스트 전용)
+def get_color_text(val, is_percent=True):
+    sign = "+" if val > 0 else ""
+    fmt = f"{val:.2f}"
+    if is_percent: res = f"{sign}{fmt}%"
+    else: res = f"{sign}${abs(val):.2f}"
+    
+    if val > 0: return f":green[{res}]"
+    elif val < 0: return f":red[{res}]"
+    else: return f":gray[{res}]"
 
 # 1. 구글 시트 연동
 @st.cache_data(ttl=60)
@@ -62,10 +75,17 @@ else:
         with st.spinner('실시간 시세와 차트를 렌더링 중입니다...'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
-            yesterday_recap = [] # 어제 장마감 데이터 백업용
+            yesterday_recap = [] 
             
             market_time_info = "가격 정보를 불러오는 중입니다..."
             time_captured = False
+            current_kr_time_str = ""
+            current_m_state = ""
+            
+            # 기준일자 계산용 뉴욕 시간 세팅
+            ny_tz = pytz.timezone('America/New_York')
+            now_ny = datetime.datetime.now(ny_tz)
+            today_str = now_ny.strftime('%Y-%m-%d')
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -74,25 +94,35 @@ else:
                 
                 try:
                     live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    daily_data = yf.Ticker(ticker).history(period="5d")
+                    daily_data = yf.Ticker(ticker).history(period="7d")
                     
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
-                        prev_close = daily_data['Close'].iloc[-2] # 어제 종가
                         
-                        # [트랙 1용 데이터] 그저께 종가 대비 어제 마감 변동률 계산
-                        if len(daily_data) >= 3:
-                            dby_close = daily_data['Close'].iloc[-3] # 그저께 종가
+                        # [트랙 1] 어제 데이터 확정 추출 (오늘 날짜 데이터는 완벽히 배제)
+                        daily_data.index = daily_data.index.tz_convert(ny_tz)
+                        historical_daily = daily_data[daily_data.index.strftime('%Y-%m-%d') < today_str]
+                        
+                        if len(historical_daily) >= 2:
+                            prev_close = historical_daily['Close'].iloc[-1] # 어제 종가
+                            dby_close = historical_daily['Close'].iloc[-2]  # 그저께 종가
                             y_change = ((prev_close - dby_close) / dby_close) * 100
                             yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
-                        
+                        elif len(historical_daily) == 1:
+                            prev_close = historical_daily['Close'].iloc[-1]
+                        else:
+                            prev_close = current_price
+                            
+                        # [트랙 2] 라이브 시간 및 상태 추출
                         if not time_captured:
                             last_time = live_data.index[-1]
                             if last_time.tzinfo is None:
                                 ny_time = last_time.tz_localize('UTC').tz_convert('America/New_York')
                             else:
                                 ny_time = last_time.tz_convert('America/New_York')
+                            
                             kr_time = ny_time.tz_convert('Asia/Seoul')
+                            current_kr_time_str = kr_time.strftime('%Y년 %m월 %d일 %H:%M')
                                 
                             t_val = ny_time.hour + ny_time.minute / 60.0
                             if 4.0 <= t_val < 9.5:
@@ -104,12 +134,14 @@ else:
                             else:
                                 m_state = "⚫ 장 마감 (Closed)"
                                 
-                            market_time_info = f"🕒 **데이터 기준 시점:** {kr_time.strftime('%Y년 %m월 %d일 %H:%M')} (한국 시간) | **현재 상태:** {m_state}"
+                            current_m_state = m_state
+                            market_time_info = f"🕒 **데이터 기준 시점:** {current_kr_time_str} (한국 시간) | **현재 상태:** {m_state}"
                             time_captured = True
                         
                         value = current_price * shares
                         change_dollar = (current_price - prev_close) * shares
                         return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
+                        daily_percent = ((current_price - prev_close) / prev_close) * 100
                         
                         total_value += value
                         total_invested += info['총투자금']
@@ -119,24 +151,26 @@ else:
                             "종목": ticker,
                             "그룹": category,
                             "보유 수량": shares,
-                            "평단가": avg_price,
-                            "현재가": current_price,
-                            "수익률 (%)": return_percent,
-                            "평가액 ($)": value,
-                            "일일 변동율": ((current_price - prev_close) / prev_close) * 100
+                            "평단가 ($)": round(avg_price, 2),
+                            "현재가 ($)": round(current_price, 2),
+                            "수익률 (%)": round(return_percent, 2),
+                            "평가액 ($)": round(value, 2),
+                            "당일 변동 (%)": round(daily_percent, 2)
                         })
                 except: pass
             
             # --- 상단: 핵심 지표 ---
             st.info(market_time_info)
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
+            
             col1, col2 = st.columns(2)
-            col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:,.2f} USD")
-            col2.metric("총 누적 수익률", f"{total_all_time_return:.2f}%", f"누적 총 손익: ${(total_value - total_invested):,.2f}")
+            # st.metric은 기본적으로 양수(초록), 음수(빨강), 0(회색)을 자동으로 지원함.
+            col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:+,.2f} USD")
+            col2.metric("총 누적 수익률", f"{total_all_time_return:+.2f}%", f"누적 총 손익: {(total_value - total_invested):+,.2f} USD")
             
             st.divider()
             
-            # --- 중단: 포트폴리오 상세 및 차트 (위로 올림!) ---
+            # --- 중단: 포트폴리오 상세 및 차트 ---
             if results:
                 df = pd.DataFrame(results)
                 
@@ -148,47 +182,57 @@ else:
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 표 출력
-                st.dataframe(df.drop(columns=['일일 변동율']), use_container_width=True, hide_index=True)
+                # 표 색상 조건부 서식 적용
+                def color_positive_negative(val):
+                    if isinstance(val, (int, float)):
+                        if val > 0: return 'color: #09ab3b' # 초록
+                        elif val < 0: return 'color: #ff4b4b' # 빨강
+                        else: return 'color: #808495' # 회색
+                    return ''
+                
+                styled_df = df.style.map(color_positive_negative, subset=['수익률 (%)', '당일 변동 (%)'])
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
                 
                 st.divider()
                 
                 # --- 하단: 투트랙 시황 브리핑 시스템 ---
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                # [트랙 1] 전날 시황 정리
+                # [트랙 1] 전일장 마감 결산
                 st.subheader("🌙 1. 전일장 마감 정리")
                 if yesterday_recap:
                     df_yesterday = pd.DataFrame(yesterday_recap)
                     top_yesterday = df_yesterday.loc[df_yesterday['어제변동률'].abs().idxmax()]
                     y_ticker = top_yesterday['종목']
                     y_change = top_yesterday['어제변동률']
-                    st.write(f"어제 미국 정규장 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_change:+.2f}%)** 였습니다. 이 데이터를 기준으로 오늘의 라이브 장이 시작되었습니다.")
+                    
+                    y_color_text = get_color_text(y_change)
+                    st.write(f"어제 미국 정규장 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 기준으로 오늘의 라이브 장이 측정됩니다.")
                 else:
-                    st.write("전일 장마감 데이터를 불러오고 있습니다.")
+                    st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
-                st.write("") # 간격 띄우기
+                st.write("") 
 
-                # [트랙 2] 실시간 흐름 파악 & 프롬프트 생성
-                st.subheader("⚡ 2. 실시간 흐름 파악 (라이브)")
+                # [트랙 2] 당일 라이브 스캐너
+                st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
                 if len(df) > 0:
-                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
+                    top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
                     top_ticker = top_mover['종목']
-                    top_change = top_mover['일일 변동율']
+                    top_change = top_mover['당일 변동 (%)']
                     
                     if abs(top_change) >= 3.0:
-                        st.error(f"🚨 **[특징주 감지]** 현재 장에서 **{top_ticker}** 종목이 **{top_change:+.2f}%** 급변동 중입니다.")
+                        live_color_text = get_color_text(top_change)
+                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str}\n\n현재 장에서 **{top_ticker}** 종목이 **{live_color_text}** 급변동 중입니다.")
                         st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
                         
-                        # AI에게 던질 완벽한 프롬프트 자동 생성 (하드코딩)
-                        ai_prompt = f"""지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. 
-반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. 
-감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."""
+                        ai_prompt = f"[{current_kr_time_str} / {current_m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
                         
                         st.code(ai_prompt, language="markdown")
                         st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
                     else:
-                        st.success("✔️ 현재 기준치(±3%)를 초과하는 특이 동향 종목 없이 안정적인 시장 흐름이 이어지고 있습니다.")
+                        st.success("✔️ **[현재 라이브 기준]** 기준치(±3%)를 초과하는 실시간 특징 동향 종목이 없습니다. 보여줄 데이터가 없으므로 브리핑을 생략합니다.")
+                else:
+                    st.info("💡 당일 실시간 거래 데이터를 분석할 수 없습니다.")
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
