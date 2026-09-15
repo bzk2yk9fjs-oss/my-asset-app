@@ -62,6 +62,8 @@ else:
         with st.spinner('실시간 시세와 차트를 렌더링 중입니다...'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
+            yesterday_recap = [] # 어제 장마감 데이터 백업용
+            
             market_time_info = "가격 정보를 불러오는 중입니다..."
             time_captured = False
             
@@ -76,7 +78,13 @@ else:
                     
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
-                        prev_close = daily_data['Close'].iloc[-2]
+                        prev_close = daily_data['Close'].iloc[-2] # 어제 종가
+                        
+                        # [트랙 1용 데이터] 그저께 종가 대비 어제 마감 변동률 계산
+                        if len(daily_data) >= 3:
+                            dby_close = daily_data['Close'].iloc[-3] # 그저께 종가
+                            y_change = ((prev_close - dby_close) / dby_close) * 100
+                            yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
                         
                         if not time_captured:
                             last_time = live_data.index[-1]
@@ -119,8 +127,8 @@ else:
                         })
                 except: pass
             
+            # --- 상단: 핵심 지표 ---
             st.info(market_time_info)
-            
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
             col1, col2 = st.columns(2)
             col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:,.2f} USD")
@@ -128,42 +136,11 @@ else:
             
             st.divider()
             
+            # --- 중단: 포트폴리오 상세 및 차트 (위로 올림!) ---
             if results:
                 df = pd.DataFrame(results)
                 
-                # ==========================================
-                # 신규 1구역: 실시간 흐름 파악 & 라이브 브리핑
-                # ==========================================
-                st.subheader("⚡ 실시간 흐름 파악 & 톱픽 브리핑")
-                
-                if len(df) > 0:
-                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
-                    top_ticker = top_mover['종목']
-                    top_change = top_mover['일일 변동율']
-                    
-                    # 변동성 3% 이상일 때만 특징주로 잡아냄
-                    if abs(top_change) >= 3.0:
-                        st.error(f"🚨 **[특징주 감지]** 현재 장에서 **{top_ticker}** 종목이 **{top_change:+.2f}%** 급변동 중입니다.")
-                        st.write("해당 움직임의 정확한 원인 파악을 위해 아래 프롬프트를 복사하여 AI 비서에게 질문하세요.")
-                        
-                        # AI에게 던질 완벽한 프롬프트 자동 생성 (3단계 로직 + 직설적 팩트 체크 요구)
-                        ai_prompt = f"""지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. 
-반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. 
-감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."""
-                        
-                        # 복사하기 쉬운 코드 블록 형태로 제공
-                        st.code(ai_prompt, language="markdown")
-                        
-                        st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
-                    else:
-                        st.success("✔️ 현재 기준치(±3%)를 초과하는 특이 동향 종목 없이 안정적인 시장 흐름이 이어지고 있습니다.")
-
-                st.divider()
-                
-                # ==========================================
-                # 신규 2구역: 전일장 마감 결산 및 전체 포트폴리오 상세
-                # ==========================================
-                st.subheader("🌙 포트폴리오 상세 및 리스크 배분 현황")
+                st.subheader("📊 포트폴리오 상세 및 리스크 배분 현황")
                 
                 fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
@@ -171,7 +148,47 @@ else:
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
+                # 표 출력
                 st.dataframe(df.drop(columns=['일일 변동율']), use_container_width=True, hide_index=True)
+                
+                st.divider()
+                
+                # --- 하단: 투트랙 시황 브리핑 시스템 ---
+                st.header("📰 시황 분석 리포트 (투트랙)")
+                
+                # [트랙 1] 전날 시황 정리
+                st.subheader("🌙 1. 전일장 마감 정리")
+                if yesterday_recap:
+                    df_yesterday = pd.DataFrame(yesterday_recap)
+                    top_yesterday = df_yesterday.loc[df_yesterday['어제변동률'].abs().idxmax()]
+                    y_ticker = top_yesterday['종목']
+                    y_change = top_yesterday['어제변동률']
+                    st.write(f"어제 미국 정규장 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_change:+.2f}%)** 였습니다. 이 데이터를 기준으로 오늘의 라이브 장이 시작되었습니다.")
+                else:
+                    st.write("전일 장마감 데이터를 불러오고 있습니다.")
+
+                st.write("") # 간격 띄우기
+
+                # [트랙 2] 실시간 흐름 파악 & 프롬프트 생성
+                st.subheader("⚡ 2. 실시간 흐름 파악 (라이브)")
+                if len(df) > 0:
+                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
+                    top_ticker = top_mover['종목']
+                    top_change = top_mover['일일 변동율']
+                    
+                    if abs(top_change) >= 3.0:
+                        st.error(f"🚨 **[특징주 감지]** 현재 장에서 **{top_ticker}** 종목이 **{top_change:+.2f}%** 급변동 중입니다.")
+                        st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
+                        
+                        # AI에게 던질 완벽한 프롬프트 자동 생성 (하드코딩)
+                        ai_prompt = f"""지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. 
+반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. 
+감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."""
+                        
+                        st.code(ai_prompt, language="markdown")
+                        st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
+                    else:
+                        st.success("✔️ 현재 기준치(±3%)를 초과하는 특이 동향 종목 없이 안정적인 시장 흐름이 이어지고 있습니다.")
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
