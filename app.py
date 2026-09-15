@@ -82,7 +82,6 @@ else:
             current_kr_time_str = ""
             current_m_state = ""
             
-            # 기준일자 계산용 뉴욕 시간 세팅
             ny_tz = pytz.timezone('America/New_York')
             now_ny = datetime.datetime.now(ny_tz)
             today_str = now_ny.strftime('%Y-%m-%d')
@@ -99,13 +98,12 @@ else:
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
                         
-                        # [트랙 1] 어제 데이터 확정 추출 (오늘 날짜 데이터는 완벽히 배제)
                         daily_data.index = daily_data.index.tz_convert(ny_tz)
                         historical_daily = daily_data[daily_data.index.strftime('%Y-%m-%d') < today_str]
                         
                         if len(historical_daily) >= 2:
-                            prev_close = historical_daily['Close'].iloc[-1] # 어제 종가
-                            dby_close = historical_daily['Close'].iloc[-2]  # 그저께 종가
+                            prev_close = historical_daily['Close'].iloc[-1] 
+                            dby_close = historical_daily['Close'].iloc[-2]  
                             y_change = ((prev_close - dby_close) / dby_close) * 100
                             yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
                         elif len(historical_daily) == 1:
@@ -113,7 +111,6 @@ else:
                         else:
                             prev_close = current_price
                             
-                        # [트랙 2] 라이브 시간 및 상태 추출
                         if not time_captured:
                             last_time = live_data.index[-1]
                             if last_time.tzinfo is None:
@@ -159,18 +156,26 @@ else:
                         })
                 except: pass
             
-            # --- 상단: 핵심 지표 ---
             st.info(market_time_info)
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
             
             col1, col2 = st.columns(2)
-            # st.metric은 기본적으로 양수(초록), 음수(빨강), 0(회색)을 자동으로 지원함.
-            col1.metric("총 자산 평가액 (USD)", f"${total_value:,.2f}", f"오늘의 변동: {total_daily_change:+,.2f} USD")
-            col2.metric("총 누적 수익률", f"{total_all_time_return:+.2f}%", f"누적 총 손익: {(total_value - total_invested):+,.2f} USD")
+            
+            # [수정된 부분] 
+            # 숫자를 맨 앞으로 빼서 Streamlit이 마이너스(-)를 인식하여 자동으로 빨간색/초록색 화살표를 처리하도록 변경했습니다.
+            col1.metric(
+                label="총 자산 평가액 (USD)", 
+                value=f"${total_value:,.2f}", 
+                delta=f"{total_daily_change:,.2f} USD (오늘의 변동)"
+            )
+            col2.metric(
+                label="총 누적 수익률", 
+                value=f"{total_all_time_return:+.2f}%", 
+                delta=f"{(total_value - total_invested):,.2f} USD (누적 총 손익)"
+            )
             
             st.divider()
             
-            # --- 중단: 포트폴리오 상세 및 차트 ---
             if results:
                 df = pd.DataFrame(results)
                 
@@ -182,12 +187,11 @@ else:
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 표 색상 조건부 서식 적용
                 def color_positive_negative(val):
                     if isinstance(val, (int, float)):
-                        if val > 0: return 'color: #09ab3b' # 초록
-                        elif val < 0: return 'color: #ff4b4b' # 빨강
-                        else: return 'color: #808495' # 회색
+                        if val > 0: return 'color: #09ab3b'
+                        elif val < 0: return 'color: #ff4b4b'
+                        else: return 'color: #808495'
                     return ''
                 
                 styled_df = df.style.map(color_positive_negative, subset=['수익률 (%)', '당일 변동 (%)'])
@@ -195,10 +199,8 @@ else:
                 
                 st.divider()
                 
-                # --- 하단: 투트랙 시황 브리핑 시스템 ---
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                # [트랙 1] 전일장 마감 결산
                 st.subheader("🌙 1. 전일장 마감 정리")
                 if yesterday_recap:
                     df_yesterday = pd.DataFrame(yesterday_recap)
@@ -213,7 +215,6 @@ else:
 
                 st.write("") 
 
-                # [트랙 2] 당일 라이브 스캐너
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
                 if len(df) > 0:
                     top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
