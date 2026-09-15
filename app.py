@@ -36,7 +36,7 @@ df_trades = load_data()
 if df_trades.empty:
     st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
 else:
-    tab1, tab2 = st.tabs(["💰 내 자산 대시보드 (3단계 브리핑)", "🌍 매크로 종합 상황판"])
+    tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
     with tab1:
         portfolio = {}
@@ -131,7 +131,40 @@ else:
             if results:
                 df = pd.DataFrame(results)
                 
-                st.subheader("📊 포트폴리오 자산군 리스크 배분 현황")
+                # ==========================================
+                # 신규 1구역: 실시간 흐름 파악 & 라이브 브리핑
+                # ==========================================
+                st.subheader("⚡ 실시간 흐름 파악 & 톱픽 브리핑")
+                
+                if len(df) > 0:
+                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
+                    top_ticker = top_mover['종목']
+                    top_change = top_mover['일일 변동율']
+                    
+                    # 변동성 3% 이상일 때만 특징주로 잡아냄
+                    if abs(top_change) >= 3.0:
+                        st.error(f"🚨 **[특징주 감지]** 현재 장에서 **{top_ticker}** 종목이 **{top_change:+.2f}%** 급변동 중입니다.")
+                        st.write("해당 움직임의 정확한 원인 파악을 위해 아래 프롬프트를 복사하여 AI 비서에게 질문하세요.")
+                        
+                        # AI에게 던질 완벽한 프롬프트 자동 생성 (3단계 로직 + 직설적 팩트 체크 요구)
+                        ai_prompt = f"""지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. 
+반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. 
+감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."""
+                        
+                        # 복사하기 쉬운 코드 블록 형태로 제공
+                        st.code(ai_prompt, language="markdown")
+                        
+                        st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
+                    else:
+                        st.success("✔️ 현재 기준치(±3%)를 초과하는 특이 동향 종목 없이 안정적인 시장 흐름이 이어지고 있습니다.")
+
+                st.divider()
+                
+                # ==========================================
+                # 신규 2구역: 전일장 마감 결산 및 전체 포트폴리오 상세
+                # ==========================================
+                st.subheader("🌙 포트폴리오 상세 및 리스크 배분 현황")
+                
                 fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
@@ -139,31 +172,6 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
                 st.dataframe(df.drop(columns=['일일 변동율']), use_container_width=True, hide_index=True)
-                
-                st.divider()
-                
-                st.subheader("🤖 일일 3단계 시황 브리핑 리포트")
-                
-                if len(df) > 0:
-                    top_mover = df.loc[df['일일 변동율'].abs().idxmax()]
-                    top_ticker = top_mover['종목']
-                    top_change = top_mover['일일 변동율']
-                    
-                    st.markdown("#### 1단계: 실시간 가격 확인")
-                    st.info(f"오늘 포트폴리오 내 최대 변동 종목은 **{top_ticker}** 입니다. (전일 대비 **{top_change:+.2f}%** 변동)")
-                    
-                    st.markdown("#### 2단계: 핵심 뉴스 매칭 (SAVE 연동)")
-                    st.write(f"복잡한 영어 뉴스 대신, 'SAVE'에서 {top_ticker}의 속보와 요약 리포트를 직관적으로 확인하세요!")
-                    st.markdown(f"👉 **[🚀 SAVE에서 {top_ticker} 실시간 뉴스 바로보기 (클릭)](https://saveticker.com)**")
-                    st.caption("※ 모바일 환경에서는 링크 클릭 시 SAVE 플랫폼으로 즉시 연결됩니다.")
-                        
-                    st.markdown("#### 3단계: 정합성 검증 (Verification)")
-                    if top_change > 3.0:
-                        st.success(f"✔️ **검증:** {top_ticker}의 +3% 이상 급등은 강한 매수세 또는 호재 뉴스와 일치할 확률이 높습니다. 단기 과열 여부만 체크하세요.")
-                    elif top_change < -3.0:
-                        st.error(f"⚠️ **검증:** {top_ticker}의 -3% 이상 급락 발생! 2단계 뉴스에서 악재(실적 미달, 매크로 충격 등)를 반드시 교차 검증해야 합니다.")
-                    else:
-                        st.warning(f"✔️ **검증:** {top_ticker}의 현재 변동은 특이사항 없는 일반적인 시장 노이즈(보합세) 범위 내에 있습니다.")
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
