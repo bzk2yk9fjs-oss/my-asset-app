@@ -7,7 +7,6 @@ st.set_page_config(page_title="한결 포트폴리오", layout="wide")
 st.title("📊 자산관리 대시보드")
 st.write("실시간 주가와 내 보유 수량을 곱해 총 자산과 수익률을 계산합니다.")
 
-# 보유 종목 및 수량
 portfolio = {
     'VOO': 1.0,
     'SPCX': 3.0,
@@ -29,13 +28,13 @@ with st.spinner('실시간 자산 가치와 오늘의 수익률을 계산하는 
     total_daily_change = 0.0
     results = []
     
+    # 1차 계산: 총 자산 먼저 구하기
     for ticker, shares in portfolio.items():
         try:
-            # 5일치 데이터를 가져와 어제 종가와 오늘 가격 비교
             stock_data = yf.Ticker(ticker).history(period="5d", prepost=True)
             if len(stock_data) >= 2:
                 current_price = stock_data['Close'].iloc[-1]
-                prev_close = stock_data['Close'].iloc[-2] # 어제 최종 종가
+                prev_close = stock_data['Close'].iloc[-2]
                 
                 value = current_price * shares
                 change_dollar = (current_price - prev_close) * shares
@@ -55,11 +54,13 @@ with st.spinner('실시간 자산 가치와 오늘의 수익률을 계산하는 
         except Exception:
             pass
             
-    # 오늘 총 자산의 등락 퍼센트 계산
+    # 2차 계산: 구해진 총 자산을 바탕으로 각 종목의 퍼센트(비중) 계산하기
+    for row in results:
+        row["비중"] = (row["평가액"] / total_value) * 100 if total_value > 0 else 0
+            
     base_value = total_value - total_daily_change
     total_change_percent = (total_daily_change / base_value) * 100 if base_value > 0 else 0
     
-    # 1. 화면 맨 위에 거대한 글씨로 총 자산과 변동액 띄우기 (오르면 초록, 내리면 빨강)
     st.metric(
         label="총 자산 평가액 (USD)", 
         value=f"${total_value:,.2f}",
@@ -68,10 +69,9 @@ with st.spinner('실시간 자산 가치와 오늘의 수익률을 계산하는 
     
     st.divider()
     
-    # 2. 계산된 내역을 화려한 표로 보여주기
     if results:
         df = pd.DataFrame(results)
-        df = df.sort_values(by="평가액", ascending=False).reset_index(drop=True)
+        df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
         
         st.dataframe(
             df,
@@ -82,13 +82,14 @@ with st.spinner('실시간 자산 가치와 오늘의 수익률을 계산하는 
                 "현재가": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
                 "오늘의 변동": st.column_config.NumberColumn("오늘 변동액 ($)", format="$%.2f"),
                 "등락률": st.column_config.NumberColumn("등락률 (%)", format="%.2f%%"),
-                # 평가액 컬럼 안에 막대그래프를 삽입하는 스트림릿 특수 기능
-                "평가액": st.column_config.ProgressColumn(
-                    "평가액 및 비중 ($)",
-                    help="내 포트폴리오에서 차지하는 비중",
-                    format="$%.2f",
+                "평가액": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
+                # 새로운 비중(%) 컬럼에 숫자와 막대그래프를 동시 적용!
+                "비중": st.column_config.ProgressColumn(
+                    "비중 (%)",
+                    help="내 총 자산 대비 해당 종목의 비율",
+                    format="%.2f%%",
                     min_value=0,
-                    max_value=float(df['평가액'].max()),
+                    max_value=100,
                 ),
             }
         )
