@@ -86,7 +86,7 @@ else:
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            # [핵심 로직] '가장 최근에 완전히 마감된 시장'의 날짜 기준점 (뉴욕 시간 20시 애프터마켓 종료 기준)
+            # [핵심 로직] '가장 최근에 완전히 마감된 시장'의 날짜 기준점 (뉴욕 20시 애프터마켓 종료 기준)
             if now_ny.hour >= 20:
                 cutoff_date = now_ny.date()
             else:
@@ -105,16 +105,25 @@ else:
                         current_price = live_data['Close'].iloc[-1]
                         
                         daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        
-                        # 기준일(cutoff_date) 이하의 데이터만 추출 (가장 최근 마감된 장)
                         historical_daily = daily_data[daily_data.index.date <= cutoff_date]
                         
                         if len(historical_daily) >= 2:
                             last_closed_date_str = historical_daily.index[-1].strftime('%m/%d')
                             y_prev_close = historical_daily['Close'].iloc[-1] 
                             y_dby_close = historical_daily['Close'].iloc[-2]  
+                            
                             y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
-                            yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
+                            y_value = y_prev_close * shares
+                            dby_value = y_dby_close * shares
+                            
+                            yesterday_recap.append({
+                                "종목": ticker, 
+                                "그룹": category,
+                                "어제변동률": y_change,
+                                "어제가치": y_value,
+                                "그제가치": dby_value,
+                                "변동액": y_value - dby_value
+                            })
                             prev_close_for_today = y_prev_close
                         else:
                             prev_close_for_today = current_price
@@ -161,6 +170,17 @@ else:
                         })
                 except: pass
             
+            # [추가] S&P 500 벤치마크 데이터 로드
+            sp500_change = 0.0
+            try:
+                gspc_data = yf.Ticker("^GSPC").history(period="10d", prepost=True)
+                gspc_data.index = gspc_data.index.tz_convert(ny_tz)
+                gspc_historical = gspc_data[gspc_data.index.date <= cutoff_date]
+                if len(gspc_historical) >= 2:
+                    sp500_change = ((gspc_historical['Close'].iloc[-1] - gspc_historical['Close'].iloc[-2]) / gspc_historical['Close'].iloc[-2]) * 100
+            except:
+                pass
+
             st.info(market_time_info)
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0
             
@@ -204,15 +224,47 @@ else:
                 
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                st.subheader(f"🌙 1. 전일장 마감 정리 (미국시간 {last_closed_date_str} 기준)")
+                st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 애프터마켓 종료 기준)")
                 if yesterday_recap:
-                    df_yesterday = pd.DataFrame(yesterday_recap)
-                    top_yesterday = df_yesterday.loc[df_yesterday['어제변동률'].abs().idxmax()]
-                    y_ticker = top_yesterday['종목']
-                    y_change = top_yesterday['어제변동률']
+                    df_y = pd.DataFrame(yesterday_recap)
                     
-                    y_color_text = get_color_text(y_change)
-                    st.write(f"미국시간 **{last_closed_date_str}** 애프터마켓(장후 시간외 거래)까지 모두 종료된 최종 마감가를 기준으로, 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 바탕으로 현재 및 다음 라이브 장을 추적합니다.")
+                    # 1 & 4. 계좌 총괄 및 벤치마크 비교
+                    total_dby = df_y['그제가치'].sum()
+                    total_y = df_y['어제가치'].sum()
+                    total_change_dollar = total_y - total_dby
+                    total_change_pct = (total_change_dollar / total_dby * 100) if total_dby > 0 else 0
+                    
+                    outperform = total_change_pct - sp500_change
+                    win_lose = "상회" if outperform > 0 else "하회"
+                    
+                    st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(total_change_pct)}** ({get_color_text(total_change_dollar, is_percent=False)})")
+                    st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 흐름 대비 내 자산 배분이 **{abs(outperform):.2f}%p {win_lose}**했습니다.")
+                    
+                    st.write("---")
+                    
+                    # 2. 그룹별 기여도
+                    st.markdown("**🧩 섹터/그룹별 기여도**")
+                    grp_agg = df_y.groupby('그룹').agg({'그제가치': 'sum', '어제가치': 'sum', '변동액': 'sum'}).reset_index()
+                    grp_agg['수익률'] = (grp_agg['변동액'] / grp_agg['그제가치']) * 100
+                    grp_agg = grp_agg.sort_values(by='수익률', ascending=False)
+                    
+                    grp_texts = []
+                    for _, row in grp_agg.iterrows():
+                        grp_texts.append(f"**{row['그룹']}** {get_color_text(row['수익률'])}")
+                    st.write(" | ".join(grp_texts))
+                    
+                    st.write("---")
+                    
+                    # 3. 최고 & 최악 종목 (Top & Bottom)
+                    st.markdown("**🏆 포트폴리오 양극단 특징주**")
+                    top_gainer = df_y.loc[df_y['어제변동률'].idxmax()]
+                    top_loser = df_y.loc[df_y['어제변동률'].idxmin()]
+                    
+                    c_gainer, c_loser = st.columns(2)
+                    with c_gainer:
+                        st.success(f"🚀 **최고 효자:** {top_gainer['종목']} ({get_color_text(top_gainer['어제변동률'])})")
+                    with c_loser:
+                        st.error(f"📉 **최대 구멍:** {top_loser['종목']} ({get_color_text(top_loser['어제변동률'])})")
                 else:
                     st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
