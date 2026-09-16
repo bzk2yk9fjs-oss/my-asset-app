@@ -13,7 +13,6 @@ st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", pa
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
 st.write("구글 시트 기반 자동화 포트폴리오 및 3단계 시황 브리핑 시스템")
 
-# [Helper] 컬러 텍스트 포맷터 (텍스트 전용)
 def get_color_text(val, is_percent=True):
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
@@ -24,7 +23,6 @@ def get_color_text(val, is_percent=True):
     elif val < 0: return f":red[{res}]"
     else: return f":gray[{res}]"
 
-# 1. 구글 시트 연동
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -35,7 +33,6 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-# 2. 종목별 자산군 분류
 def get_category(ticker):
     ticker = ticker.upper()
     if ticker in ['VOO', 'SGOV']: return '코어 (Core)'
@@ -81,10 +78,14 @@ else:
             time_captured = False
             current_kr_time_str = ""
             current_m_state = ""
+            is_market_closed = False
             
+            kr_tz = pytz.timezone('Asia/Seoul')
             ny_tz = pytz.timezone('America/New_York')
+            now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
-            today_str = now_ny.strftime('%Y-%m-%d')
+            
+            kst_yesterday = now_kr.date() - datetime.timedelta(days=1)
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -93,36 +94,35 @@ else:
                 
                 try:
                     live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    daily_data = yf.Ticker(ticker).history(period="7d")
+                    # [핵심 수정] 과거 일봉 데이터도 애프터마켓(prepost=True)을 포함하여 불러오도록 강제
+                    daily_data = yf.Ticker(ticker).history(period="10d", prepost=True)
                     
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
                         
                         daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        historical_daily = daily_data[daily_data.index.strftime('%Y-%m-%d') < today_str]
+                        target_us_date = kst_yesterday - datetime.timedelta(days=1)
+                        target_us_str = target_us_date.strftime('%Y-%m-%d')
+                        
+                        historical_daily = daily_data[daily_data.index.strftime('%Y-%m-%d') <= target_us_str]
                         
                         if len(historical_daily) >= 2:
-                            prev_close = historical_daily['Close'].iloc[-1] 
-                            dby_close = historical_daily['Close'].iloc[-2]  
-                            y_change = ((prev_close - dby_close) / dby_close) * 100
+                            y_prev_close = historical_daily['Close'].iloc[-1] 
+                            y_dby_close = historical_daily['Close'].iloc[-2]  
+                            y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
                             yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
-                        elif len(historical_daily) == 1:
-                            prev_close = historical_daily['Close'].iloc[-1]
-                        else:
-                            prev_close = current_price
+                        
+                        daily_regular = daily_data[daily_data.index.strftime('%Y-%m-%d') < now_ny.strftime('%Y-%m-%d')]
+                        prev_close_for_today = daily_regular['Close'].iloc[-1] if len(daily_regular) > 0 else current_price
                             
                         if not time_captured:
-                            last_time = live_data.index[-1]
-                            if last_time.tzinfo is None:
-                                ny_time = last_time.tz_localize('UTC').tz_convert('America/New_York')
-                            else:
-                                ny_time = last_time.tz_convert('America/New_York')
+                            current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
+                            t_val = now_ny.hour + now_ny.minute / 60.0
                             
-                            kr_time = ny_time.tz_convert('Asia/Seoul')
-                            current_kr_time_str = kr_time.strftime('%Y년 %m월 %d일 %H:%M')
-                                
-                            t_val = ny_time.hour + ny_time.minute / 60.0
-                            if 4.0 <= t_val < 9.5:
+                            if now_ny.weekday() >= 5: 
+                                m_state = "⚫ 장 마감 (Weekend)"
+                                is_market_closed = True
+                            elif 4.0 <= t_val < 9.5:
                                 m_state = "🟡 프리마켓 (Pre-market)"
                             elif 9.5 <= t_val < 16.0:
                                 m_state = "🟢 본장 (Regular Market)"
@@ -130,15 +130,16 @@ else:
                                 m_state = "🔵 애프터마켓 (After-hours)"
                             else:
                                 m_state = "⚫ 장 마감 (Closed)"
+                                is_market_closed = True
                                 
                             current_m_state = m_state
-                            market_time_info = f"🕒 **데이터 기준 시점:** {current_kr_time_str} (한국 시간) | **현재 상태:** {m_state}"
+                            market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국 시간) | **현재 상태:** {m_state}"
                             time_captured = True
                         
                         value = current_price * shares
-                        change_dollar = (current_price - prev_close) * shares
+                        change_dollar = (current_price - prev_close_for_today) * shares
                         return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
-                        daily_percent = ((current_price - prev_close) / prev_close) * 100
+                        daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100
                         
                         total_value += value
                         total_invested += info['총투자금']
@@ -161,8 +162,6 @@ else:
             
             col1, col2 = st.columns(2)
             
-            # [수정된 부분] 
-            # 숫자를 맨 앞으로 빼서 Streamlit이 마이너스(-)를 인식하여 자동으로 빨간색/초록색 화살표를 처리하도록 변경했습니다.
             col1.metric(
                 label="총 자산 평가액 (USD)", 
                 value=f"${total_value:,.2f}", 
@@ -201,7 +200,8 @@ else:
                 
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                st.subheader("🌙 1. 전일장 마감 정리")
+                # [텍스트 수정] 애프터마켓 포함 명시
+                st.subheader(f"🌙 1. 전일장 마감 정리 (애프터마켓 포함, 한국 {kst_yesterday.strftime('%m/%d')} 기준)")
                 if yesterday_recap:
                     df_yesterday = pd.DataFrame(yesterday_recap)
                     top_yesterday = df_yesterday.loc[df_yesterday['어제변동률'].abs().idxmax()]
@@ -209,14 +209,17 @@ else:
                     y_change = top_yesterday['어제변동률']
                     
                     y_color_text = get_color_text(y_change)
-                    st.write(f"어제 미국 정규장 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 기준으로 오늘의 라이브 장이 측정됩니다.")
+                    st.write(f"한국시간 **{kst_yesterday.strftime('%m월 %d일')}** 애프터마켓(장후 시간외 거래) 최종 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 기준으로 라이브 장을 대비합니다.")
                 else:
                     st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
                 st.write("") 
 
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
-                if len(df) > 0:
+                
+                if is_market_closed:
+                    st.info("💡 **현재 프리마켓 개장 전(또는 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
+                elif len(df) > 0:
                     top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
                     top_ticker = top_mover['종목']
                     top_change = top_mover['당일 변동 (%)']
@@ -273,5 +276,5 @@ else:
         
         st.divider()
         st.markdown("### 3. CME FedWatch Tool (금리 예측)")
-        st.write("미 연준(Fed)의 다음 기준금리 결정 확률을 실시간으로 추적합니다.")
+        st.write("미 연준(Fed)의 다음 기준금리 결정 확률을 실시간 추적합니다.")
         st.markdown("👉 **[🔗 CME FedWatch Tool 실시간 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
