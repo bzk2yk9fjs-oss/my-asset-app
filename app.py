@@ -79,13 +79,18 @@ else:
             current_kr_time_str = ""
             current_m_state = ""
             is_market_closed = False
+            last_closed_date_str = ""
             
             kr_tz = pytz.timezone('Asia/Seoul')
             ny_tz = pytz.timezone('America/New_York')
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            kst_yesterday = now_kr.date() - datetime.timedelta(days=1)
+            # [핵심 로직] '가장 최근에 완전히 마감된 시장'의 날짜 기준점 (뉴욕 시간 20시 애프터마켓 종료 기준)
+            if now_ny.hour >= 20:
+                cutoff_date = now_ny.date()
+            else:
+                cutoff_date = now_ny.date() - datetime.timedelta(days=1)
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -94,26 +99,25 @@ else:
                 
                 try:
                     live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    # [핵심 수정] 과거 일봉 데이터도 애프터마켓(prepost=True)을 포함하여 불러오도록 강제
                     daily_data = yf.Ticker(ticker).history(period="10d", prepost=True)
                     
                     if len(live_data) > 0 and len(daily_data) >= 2:
                         current_price = live_data['Close'].iloc[-1]
                         
                         daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        target_us_date = kst_yesterday - datetime.timedelta(days=1)
-                        target_us_str = target_us_date.strftime('%Y-%m-%d')
                         
-                        historical_daily = daily_data[daily_data.index.strftime('%Y-%m-%d') <= target_us_str]
+                        # 기준일(cutoff_date) 이하의 데이터만 추출 (가장 최근 마감된 장)
+                        historical_daily = daily_data[daily_data.index.date <= cutoff_date]
                         
                         if len(historical_daily) >= 2:
+                            last_closed_date_str = historical_daily.index[-1].strftime('%m/%d')
                             y_prev_close = historical_daily['Close'].iloc[-1] 
                             y_dby_close = historical_daily['Close'].iloc[-2]  
                             y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
                             yesterday_recap.append({"종목": ticker, "어제변동률": y_change})
-                        
-                        daily_regular = daily_data[daily_data.index.strftime('%Y-%m-%d') < now_ny.strftime('%Y-%m-%d')]
-                        prev_close_for_today = daily_regular['Close'].iloc[-1] if len(daily_regular) > 0 else current_price
+                            prev_close_for_today = y_prev_close
+                        else:
+                            prev_close_for_today = current_price
                             
                         if not time_captured:
                             current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
@@ -200,8 +204,7 @@ else:
                 
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                # [텍스트 수정] 애프터마켓 포함 명시
-                st.subheader(f"🌙 1. 전일장 마감 정리 (애프터마켓 포함, 한국 {kst_yesterday.strftime('%m/%d')} 기준)")
+                st.subheader(f"🌙 1. 전일장 마감 정리 (미국시간 {last_closed_date_str} 기준)")
                 if yesterday_recap:
                     df_yesterday = pd.DataFrame(yesterday_recap)
                     top_yesterday = df_yesterday.loc[df_yesterday['어제변동률'].abs().idxmax()]
@@ -209,7 +212,7 @@ else:
                     y_change = top_yesterday['어제변동률']
                     
                     y_color_text = get_color_text(y_change)
-                    st.write(f"한국시간 **{kst_yesterday.strftime('%m월 %d일')}** 애프터마켓(장후 시간외 거래) 최종 마감 기준으로 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 기준으로 라이브 장을 대비합니다.")
+                    st.write(f"미국시간 **{last_closed_date_str}** 애프터마켓(장후 시간외 거래)까지 모두 종료된 최종 마감가를 기준으로, 내 포트폴리오에서 가장 큰 변동을 보였던 종목은 **{y_ticker} ({y_color_text})** 였습니다. 이 데이터를 바탕으로 현재 및 다음 라이브 장을 추적합니다.")
                 else:
                     st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
@@ -218,7 +221,7 @@ else:
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
                 
                 if is_market_closed:
-                    st.info("💡 **현재 프리마켓 개장 전(또는 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
+                    st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
                 elif len(df) > 0:
                     top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
                     top_ticker = top_mover['종목']
