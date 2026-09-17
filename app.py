@@ -14,6 +14,7 @@ st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
 st.write("구글 시트 기반 자동화 포트폴리오 및 3단계 시황 브리핑 시스템")
 
 def get_color_text(val, is_percent=True):
+    if pd.isna(val): return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
     if is_percent: res = f"{sign}{fmt}%"
@@ -98,25 +99,39 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    # 실시간 용 1분봉 데이터
                     live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
-                    # 전일장 성적표 용 일봉 데이터 (확실한 종가)
-                    daily_data = yf.Ticker(ticker).history(period="5d", interval="1d", prepost=False)
+                    daily_data = yf.Ticker(ticker).history(period="10d", interval="1d", prepost=False)
                     
-                    if not live_data.empty and not daily_data.empty:
-                        daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        valid_daily_dates = daily_data[daily_data.index.date <= target_date]
+                    # 결측치(NaN) 완벽 차단 로직 추가
+                    live_data = live_data.dropna(subset=['Close'])
+                    daily_data = daily_data.dropna(subset=['Close'])
+                    
+                    if live_data.empty or daily_data.empty:
+                        continue
                         
-                        if len(valid_daily_dates) >= 2:
-                            # 팩트 기반 일봉 종가 추출
-                            y_prev_close = valid_daily_dates['Close'].iloc[-1]
-                            y_dby_close = valid_daily_dates['Close'].iloc[-2]
-                            last_closed_date_str = valid_daily_dates.index[-1].strftime('%m/%d')
-                            
-                            y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
-                            y_value = y_prev_close * shares
-                            dby_value = y_dby_close * shares
-                            
+                    if live_data.index.tz is None:
+                        live_data.index = live_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else:
+                        live_data.index = live_data.index.tz_convert(ny_tz)
+                        
+                    if daily_data.index.tz is None:
+                        daily_data.index = daily_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else:
+                        daily_data.index = daily_data.index.tz_convert(ny_tz)
+                        
+                    valid_daily = daily_data[daily_data.index.date <= target_date]
+                    
+                    if len(valid_daily) >= 2:
+                        y_prev_close = float(valid_daily['Close'].iloc[-1])
+                        y_dby_close = float(valid_daily['Close'].iloc[-2])
+                        
+                        last_closed_date_str = valid_daily.index[-1].strftime('%m/%d')
+                        
+                        y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
+                        y_value = y_prev_close * shares
+                        dby_value = y_dby_close * shares
+                        
+                        if not (pd.isna(y_value) or pd.isna(dby_value)):
                             yesterday_recap.append({
                                 "종목": ticker, 
                                 "그룹": category,
@@ -125,65 +140,72 @@ else:
                                 "그제가치": dby_value,
                                 "변동액": y_value - dby_value
                             })
-                            prev_close_for_today = y_prev_close
+                        prev_close_for_today = y_prev_close
+                    else:
+                        prev_close_for_today = float(live_data['Close'].iloc[0])
+                        
+                    current_price = float(live_data['Close'].iloc[-1])
+                    
+                    # 결측치 2차 방어
+                    if pd.isna(current_price) or pd.isna(prev_close_for_today):
+                        continue
+                        
+                    if not time_captured:
+                        current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
+                        t_val = now_ny.hour + now_ny.minute / 60.0
+                        
+                        if now_ny.weekday() >= 5: 
+                            m_state = "⚫ 주말 (애프터 마켓 최종 마감 가격 유지)"
+                            price_basis_label = "애프터 마켓 최종 마감 가격"
+                            is_market_closed = True
+                        elif 4.0 <= t_val < 9.5:
+                            m_state = "🟡 프리마켓 진행 중"
+                            price_basis_label = "실시간 프리마켓 가격"
+                        elif 9.5 <= t_val < 16.0:
+                            m_state = "🟢 본장 진행 중"
+                            price_basis_label = "실시간 본장 가격"
+                        elif 16.0 <= t_val < 20.0:
+                            m_state = "🔵 애프터 마켓 진행 중"
+                            price_basis_label = "실시간 애프터 마켓 가격"
                         else:
-                            prev_close_for_today = live_data['Close'].iloc[-1]
+                            m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
+                            price_basis_label = "애프터 마켓 최종 마감 가격"
+                            is_market_closed = True
                             
-                        current_price = live_data['Close'].iloc[-1]
-                        
-                        if not time_captured:
-                            current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
-                            t_val = now_ny.hour + now_ny.minute / 60.0
-                            
-                            if now_ny.weekday() >= 5: 
-                                m_state = "⚫ 주말 (애프터 마켓 최종 마감 가격 유지)"
-                                price_basis_label = "애프터 마켓 최종 마감 가격"
-                                is_market_closed = True
-                            elif 4.0 <= t_val < 9.5:
-                                m_state = "🟡 프리마켓 진행 중"
-                                price_basis_label = "실시간 프리마켓 가격"
-                            elif 9.5 <= t_val < 16.0:
-                                m_state = "🟢 본장 진행 중"
-                                price_basis_label = "실시간 본장 가격"
-                            elif 16.0 <= t_val < 20.0:
-                                m_state = "🔵 애프터 마켓 진행 중"
-                                price_basis_label = "실시간 애프터 마켓 가격"
-                            else:
-                                m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
-                                price_basis_label = "애프터 마켓 최종 마감 가격"
-                                is_market_closed = True
-                                
-                            current_m_state = m_state
-                            market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
-                            time_captured = True
-                        
-                        value = current_price * shares
-                        change_dollar = (current_price - prev_close_for_today) * shares
-                        return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
-                        daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100 if prev_close_for_today > 0 else 0
-                        
-                        total_value += value
-                        total_invested += info['총투자금']
-                        total_daily_change += change_dollar
-                        
-                        results.append({
-                            "종목": ticker,
-                            "그룹": category,
-                            "보유 수량": shares,
-                            "평단가 ($)": round(avg_price, 2),
-                            "현재가 ($)": round(current_price, 2),
-                            "수익률 (%)": round(return_percent, 2),
-                            "평가액 ($)": round(value, 2),
-                            "당일 변동 (%)": round(daily_percent, 2)
-                        })
+                        current_m_state = m_state
+                        market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
+                        time_captured = True
+                    
+                    value = current_price * shares
+                    change_dollar = (current_price - prev_close_for_today) * shares
+                    return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
+                    daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100 if prev_close_for_today > 0 else 0
+                    
+                    total_value += value
+                    total_invested += info['총투자금']
+                    total_daily_change += change_dollar
+                    
+                    results.append({
+                        "종목": ticker,
+                        "그룹": category,
+                        "보유 수량": shares,
+                        "평단가 ($)": round(avg_price, 2),
+                        "현재가 ($)": round(current_price, 2),
+                        "수익률 (%)": round(return_percent, 2),
+                        "평가액 ($)": round(value, 2),
+                        "당일 변동 (%)": round(daily_percent, 2)
+                    })
                 except Exception as e: 
                     pass
             
             sp500_change = 0.0
             try:
-                gspc_data = yf.Ticker("^GSPC").history(period="10d")
-                gspc_data.index = gspc_data.index.tz_convert(ny_tz)
-                gspc_historical = gspc_data[gspc_data.index.date <= target_date].dropna(subset=['Close'])
+                gspc_data = yf.Ticker("^GSPC").history(period="10d", interval="1d")
+                gspc_data = gspc_data.dropna(subset=['Close'])
+                if gspc_data.index.tz is None: gspc_data.index = gspc_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                else: gspc_data.index = gspc_data.index.tz_convert(ny_tz)
+                
+                gspc_historical = gspc_data[gspc_data.index.date <= target_date]
                 if len(gspc_historical) >= 2:
                     sp500_change = ((gspc_historical['Close'].iloc[-1] - gspc_historical['Close'].iloc[-2]) / gspc_historical['Close'].iloc[-2]) * 100
             except:
