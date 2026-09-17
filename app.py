@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.5: 한글 패치 및 개별주 레버리지(Single-Stock ETF) 유니버스 확장")
+st.write("V3.6: 검색창 100% 한글 패치 및 스페이스X(SPCX) 반영")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -21,7 +21,7 @@ KOR_NAMES = {
     # 내 포트폴리오 
     'VOO': '뱅가드 S&P 500', 'SGOV': '미국 0-3개월 초단기채', 'KO': '코카콜라', 
     'BAC': '뱅크오브아메리카', 'NEE': '넥스트에라 에너지', 'LMT': '록히드 마틴', 
-    'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': 'SPAC & 신규상장 ETF', 
+    'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': '스페이스X', 
     'RGTI': '리게티 컴퓨팅', 'ARQQ': '아킷 퀀텀',
     # 빅테크 & 우량주
     'AAPL': '애플', 'MSFT': '마이크로소프트', 'AMZN': '아마존닷컴', 'NVDA': '엔비디아', 
@@ -77,18 +77,12 @@ def add_trade(date_str, ticker, trade_type, qty, price, group):
 
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
-    # SEC 데이터에 누락되기 쉬운 핵심 ETF 및 개별주 레버리지 강제 주입
-    core_etfs = [
-        "SPY | SPDR S&P 500 ETF Trust", "QQQ | Invesco QQQ Trust", "DIA | SPDR Dow Jones Industrial Average ETF",
-        "TQQQ | ProShares UltraPro QQQ", "SQQQ | ProShares UltraPro Short QQQ",
-        "SOXL | Direxion Daily Semiconductor Bull 3X", "SOXS | Direxion Daily Semiconductor Bear 3X",
-        "UPRO | ProShares UltraPro S&P500", "SSO | ProShares Ultra S&P500", "QLD | ProShares Ultra QQQ",
-        "SOXX | iShares Semiconductor ETF", "USD | ProShares Ultra Semiconductors",
-        "SCHD | Schwab US Dividend Equity ETF", "JEPI | JPMorgan Equity Premium Income ETF", 
-        "TLT | iShares 20+ Year Treasury Bond ETF", "VOO | Vanguard S&P 500 ETF", "SGOV | iShares 0-3 Month Treasury Bond ETF",
-        "SNXX | Tradr 2X Long SNDK Daily ETF", "NVDL | GraniteShares 2x Long NVDA", 
-        "TSLL | Direxion Daily TSLA Bull 1.5X", "CONL | GraniteShares 2x Long COIN"
+    # SEC 데이터에 누락되기 쉬운 핵심 ETF 및 개별주 레버리지
+    core_etf_tickers = [
+        'SPY', 'QQQ', 'DIA', 'TQQQ', 'SQQQ', 'SOXL', 'SOXS', 'UPRO', 'SSO', 'QLD', 
+        'SOXX', 'USD', 'SCHD', 'JEPI', 'TLT', 'VOO', 'SGOV', 'SNXX', 'NVDL', 'TSLL', 'CONL'
     ]
+    core_etfs = [f"{tk} | {KOR_NAMES.get(tk, tk)}" for tk in core_etf_tickers]
     
     try:
         headers = {'User-Agent': 'QuantPortfolioAdmin/1.0 (contact@quantadmin.com)'}
@@ -99,8 +93,9 @@ def get_all_us_tickers():
             ticker_list = core_etfs.copy()
             for item in data.values():
                 tk = item['ticker'].replace('-', '.')
-                title = item['title']
-                if not any(tk == etf.split(" | ")[0] for etf in core_etfs):
+                if tk not in core_etf_tickers:
+                    # SEC 영어 이름 대신, KOR_NAMES 사전에 한글 이름이 있다면 가로채서 번역 적용
+                    title = KOR_NAMES.get(tk, item['title'])
                     ticker_list.append(f"{tk} | {title}")
                 
             ticker_list = list(set(ticker_list))
@@ -109,13 +104,11 @@ def get_all_us_tickers():
         else:
             raise Exception("SEC API Error")
     except Exception:
-        fallback_tickers = core_etfs + [
-            "AAPL | Apple Inc.", "MSFT | Microsoft Corp.", "NVDA | NVIDIA Corp.", "TSLA | Tesla Inc.", 
-            "AMZN | Amazon.com Inc.", "META | Meta Platforms Inc.", "GOOGL | Alphabet Inc.",
-            "KO | Coca-Cola Co.", "BAC | Bank of America Corp", "NEE | NextEra Energy Inc.", 
-            "LMT | Lockheed Martin Corp.", "IBM | International Business Machines Corp.", 
-            "RGTI | Rigetti Computing Inc.", "ARQQ | Arqit Quantum Inc.", "SPCX | SPAC and New Issue ETF"
+        fallback_tk_list = [
+            'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOGL', 'KO', 
+            'BAC', 'NEE', 'LMT', 'IBM', 'RGTI', 'ARQQ', 'SPCX'
         ]
+        fallback_tickers = core_etfs + [f"{tk} | {KOR_NAMES.get(tk, tk)}" for tk in fallback_tk_list]
         return ["직접 입력 (티커 수동 입력)"] + sorted(list(set(fallback_tickers)))
 
 # ==========================================
@@ -211,7 +204,7 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중입니다... (공식 일봉 우선 검색 적용)'):
+        with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중... (공식 일봉 우선 검색 적용)'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
             yesterday_recap = [] 
