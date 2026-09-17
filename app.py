@@ -88,7 +88,8 @@ else:
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            if now_ny.hour >= 18:
+            # 정규장 마감(오후 4시)이 지났으면 오늘 날짜가 '마감된 기준일', 안 지났으면 어제 날짜
+            if now_ny.hour >= 16:
                 target_date = now_ny.date()
             else:
                 target_date = now_ny.date() - datetime.timedelta(days=1)
@@ -102,30 +103,32 @@ else:
                     live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
                     daily_data = yf.Ticker(ticker).history(period="10d", interval="1d", prepost=False)
                     
-                    # 결측치(NaN) 완벽 차단 로직 추가
                     live_data = live_data.dropna(subset=['Close'])
                     daily_data = daily_data.dropna(subset=['Close'])
                     
                     if live_data.empty or daily_data.empty:
                         continue
-                        
+                    
+                    # 라이브 데이터 시간대 처리
                     if live_data.index.tz is None:
                         live_data.index = live_data.index.tz_localize('UTC').tz_convert(ny_tz)
                     else:
                         live_data.index = live_data.index.tz_convert(ny_tz)
                         
-                    if daily_data.index.tz is None:
-                        daily_data.index = daily_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                    # 일봉 데이터 날짜 추출 (에러 원인 수정: 억지로 UTC 변환 시 하루가 밀리는 현상 차단)
+                    if daily_data.index.tz is not None:
+                        daily_dates = daily_data.index.tz_convert(ny_tz).date
                     else:
-                        daily_data.index = daily_data.index.tz_convert(ny_tz)
+                        daily_dates = daily_data.index.date
                         
-                    valid_daily = daily_data[daily_data.index.date <= target_date]
+                    daily_data['TradeDate'] = daily_dates
+                    valid_daily = daily_data[daily_data['TradeDate'] <= target_date]
                     
                     if len(valid_daily) >= 2:
                         y_prev_close = float(valid_daily['Close'].iloc[-1])
                         y_dby_close = float(valid_daily['Close'].iloc[-2])
                         
-                        last_closed_date_str = valid_daily.index[-1].strftime('%m/%d')
+                        last_closed_date_str = valid_daily['TradeDate'].iloc[-1].strftime('%m/%d')
                         
                         y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
                         y_value = y_prev_close * shares
@@ -146,7 +149,6 @@ else:
                         
                     current_price = float(live_data['Close'].iloc[-1])
                     
-                    # 결측치 2차 방어
                     if pd.isna(current_price) or pd.isna(prev_close_for_today):
                         continue
                         
@@ -202,10 +204,15 @@ else:
             try:
                 gspc_data = yf.Ticker("^GSPC").history(period="10d", interval="1d")
                 gspc_data = gspc_data.dropna(subset=['Close'])
-                if gspc_data.index.tz is None: gspc_data.index = gspc_data.index.tz_localize('UTC').tz_convert(ny_tz)
-                else: gspc_data.index = gspc_data.index.tz_convert(ny_tz)
                 
-                gspc_historical = gspc_data[gspc_data.index.date <= target_date]
+                if gspc_data.index.tz is not None:
+                    gspc_dates = gspc_data.index.tz_convert(ny_tz).date
+                else:
+                    gspc_dates = gspc_data.index.date
+                    
+                gspc_data['TradeDate'] = gspc_dates
+                gspc_historical = gspc_data[gspc_data['TradeDate'] <= target_date]
+                
                 if len(gspc_historical) >= 2:
                     sp500_change = ((gspc_historical['Close'].iloc[-1] - gspc_historical['Close'].iloc[-2]) / gspc_historical['Close'].iloc[-2]) * 100
             except:
