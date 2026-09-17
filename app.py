@@ -12,7 +12,34 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.3: 전 종목 티커 자동완성 & 자산군 동적 라우팅 적용")
+st.write("V3.5: 한글 패치 및 개별주 레버리지(Single-Stock ETF) 유니버스 확장")
+
+# ==========================================
+# 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
+# ==========================================
+KOR_NAMES = {
+    # 내 포트폴리오 
+    'VOO': '뱅가드 S&P 500', 'SGOV': '미국 0-3개월 초단기채', 'KO': '코카콜라', 
+    'BAC': '뱅크오브아메리카', 'NEE': '넥스트에라 에너지', 'LMT': '록히드 마틴', 
+    'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': 'SPAC & 신규상장 ETF', 
+    'RGTI': '리게티 컴퓨팅', 'ARQQ': '아킷 퀀텀',
+    # 빅테크 & 우량주
+    'AAPL': '애플', 'MSFT': '마이크로소프트', 'AMZN': '아마존닷컴', 'NVDA': '엔비디아', 
+    'TSLA': '테슬라', 'META': '메타 플랫폼스', 'BRK.B': '버크셔 해서웨이', 'AVGO': '브로드컴', 
+    'TSM': 'TSMC', 'LLY': '일라이 릴리', 'JPM': 'JP모건 체이스', 'V': '비자', 
+    'XOM': '엑슨모빌', 'UNH': '유나이티드헬스', 'PG': '프록터 앤 갬블 (P&G)', 
+    'MA': '마스터카드', 'JNJ': '존슨앤존슨', 'HD': '홈디포', 'MRK': '머크', 'CVX': '쉐브론',
+    # 주요 ETF & 지수 레버리지
+    'SPY': 'SPDR S&P 500', 'QQQ': '인베스코 QQQ', 'DIA': 'SPDR 다우존스',
+    'SCHD': '슈왑 배당 ETF (SCHD)', 'JEPI': 'JP모건 커버드콜 (JEPI)', 'TLT': '미국 20년 이상 장기채',
+    'TQQQ': '프로셰어즈 TQQQ (나스닥 3X)', 'SQQQ': '프로셰어즈 SQQQ (인버스 3X)', 
+    'SOXL': '디렉시온 SOXL (반도체 3X)', 'SOXS': '디렉시온 SOXS (인버스 3X)',
+    'SSO': '프로셰어즈 SSO (S&P 500 2X)', 'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
+    'QLD': '프로셰어즈 QLD (나스닥 2X)', 'SOXX': 'iShares 반도체 ETF', 'USD': '프로셰어즈 반도체 2X',
+    # 개별주 레버리지 (Single-Stock ETFs)
+    'SNXX': '트레이더 샌디스크 2X', 'NVDL': '그래니트셰어즈 엔비디아 2X', 
+    'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X'
+}
 
 # ==========================================
 # 1. 백엔드 데이터베이스 연결 및 제어 로직
@@ -50,40 +77,46 @@ def add_trade(date_str, ticker, trade_type, qty, price, group):
 
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
+    # SEC 데이터에 누락되기 쉬운 핵심 ETF 및 개별주 레버리지 강제 주입
+    core_etfs = [
+        "SPY | SPDR S&P 500 ETF Trust", "QQQ | Invesco QQQ Trust", "DIA | SPDR Dow Jones Industrial Average ETF",
+        "TQQQ | ProShares UltraPro QQQ", "SQQQ | ProShares UltraPro Short QQQ",
+        "SOXL | Direxion Daily Semiconductor Bull 3X", "SOXS | Direxion Daily Semiconductor Bear 3X",
+        "UPRO | ProShares UltraPro S&P500", "SSO | ProShares Ultra S&P500", "QLD | ProShares Ultra QQQ",
+        "SOXX | iShares Semiconductor ETF", "USD | ProShares Ultra Semiconductors",
+        "SCHD | Schwab US Dividend Equity ETF", "JEPI | JPMorgan Equity Premium Income ETF", 
+        "TLT | iShares 20+ Year Treasury Bond ETF", "VOO | Vanguard S&P 500 ETF", "SGOV | iShares 0-3 Month Treasury Bond ETF",
+        "SNXX | Tradr 2X Long SNDK Daily ETF", "NVDL | GraniteShares 2x Long NVDA", 
+        "TSLL | Direxion Daily TSLA Bull 1.5X", "CONL | GraniteShares 2x Long COIN"
+    ]
+    
     try:
-        # SEC endpoint block 우회 또는 실패시 사용할 수 있는 광범위한 기본 리스트
         headers = {'User-Agent': 'QuantPortfolioAdmin/1.0 (contact@quantadmin.com)'}
         url = "https://www.sec.gov/files/company_tickers.json"
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            ticker_list = []
+            ticker_list = core_etfs.copy()
             for item in data.values():
                 tk = item['ticker'].replace('-', '.')
                 title = item['title']
-                ticker_list.append(f"{tk} | {title}")
+                if not any(tk == etf.split(" | ")[0] for etf in core_etfs):
+                    ticker_list.append(f"{tk} | {title}")
                 
+            ticker_list = list(set(ticker_list))
             ticker_list.sort()
             return ["직접 입력 (티커 수동 입력)"] + ticker_list
         else:
             raise Exception("SEC API Error")
     except Exception:
-        fallback_tickers = [
-            "AAPL | Apple Inc.", "ABBV | AbbVie Inc.", "AMZN | Amazon.com Inc.", 
-            "ARQQ | Arqit Quantum Inc.", "AVGO | Broadcom Inc.", "BAC | Bank of America Corp", 
-            "BRK.B | Berkshire Hathaway Inc.", "CVX | Chevron Corp.", "DIA | SPDR Dow Jones Industrial Average ETF", 
-            "GOOGL | Alphabet Inc.", "HD | Home Depot Inc.", "IBM | International Business Machines Corp.", 
-            "IWM | iShares Russell 2000 ETF", "JEPI | JPMorgan Equity Premium Income ETF", "JNJ | Johnson & Johnson", 
-            "JPM | JPMorgan Chase & Co.", "KO | Coca-Cola Co.", "LMT | Lockheed Martin Corp.", 
-            "MA | Mastercard Inc.", "META | Meta Platforms Inc.", "MRK | Merck & Co. Inc.", 
-            "MSFT | Microsoft Corp.", "NEE | NextEra Energy Inc.", "NVDA | NVIDIA Corp.", 
-            "PEP | PepsiCo Inc.", "PG | Procter & Gamble Co.", "QQQ | Invesco QQQ Trust", 
-            "RGTI | Rigetti Computing Inc.", "SCHD | Schwab US Dividend Equity ETF", "SGOV | iShares 0-3 Month Treasury Bond ETF", 
-            "SOXX | iShares Semiconductor ETF", "SPCX | SPAC and New Issue ETF", "SPY | SPDR S&P 500 ETF Trust", 
-            "TLT | iShares 20+ Year Treasury Bond ETF", "TQQQ | ProShares UltraPro QQQ", "TSLA | Tesla Inc.", 
-            "UNH | UnitedHealth Group Inc.", "V | Visa Inc.", "VOO | Vanguard S&P 500 ETF", "XOM | Exxon Mobil Corp."
+        fallback_tickers = core_etfs + [
+            "AAPL | Apple Inc.", "MSFT | Microsoft Corp.", "NVDA | NVIDIA Corp.", "TSLA | Tesla Inc.", 
+            "AMZN | Amazon.com Inc.", "META | Meta Platforms Inc.", "GOOGL | Alphabet Inc.",
+            "KO | Coca-Cola Co.", "BAC | Bank of America Corp", "NEE | NextEra Energy Inc.", 
+            "LMT | Lockheed Martin Corp.", "IBM | International Business Machines Corp.", 
+            "RGTI | Rigetti Computing Inc.", "ARQQ | Arqit Quantum Inc.", "SPCX | SPAC and New Issue ETF"
         ]
-        return ["직접 입력 (티커 수동 입력)"] + fallback_tickers
+        return ["직접 입력 (티커 수동 입력)"] + sorted(list(set(fallback_tickers)))
 
 # ==========================================
 # 2. 사이드바: 매매 컨트롤러 (Input Form)
@@ -93,7 +126,7 @@ all_us_tickers = get_all_us_tickers()
 with st.sidebar:
     st.header("⚡ 스마트 트레이딩 룸")
     if len(all_us_tickers) > 100:
-        st.caption(f"미국 상장 {len(all_us_tickers)-1:,}개 전 종목 데이터 연동됨")
+        st.caption(f"미국 상장 {len(all_us_tickers)-1:,}개 종목 연동됨 (ETF 포함)")
     else:
         st.caption("주요 티커 데이터 연동됨 (수동 입력 가능)")
     
@@ -125,7 +158,7 @@ with st.sidebar:
                         st.cache_data.clear()
                         st.rerun()
                     else:
-                        st.error("기록 실패. 구글 시트 F열에 '그룹' 칸을 만들었는지 확인해라.")
+                        st.error("기록 실패. 구글 시트 권한을 점검해라.")
             else:
                 st.warning("티커를 선택하거나 입력해라.")
 
@@ -243,6 +276,8 @@ else:
                 avg_price = float(info['총투자금']) / shares if shares > 0 else 0
                 category = get_category(ticker)
                 
+                kor_name = KOR_NAMES.get(ticker, ticker)
+                
                 ticker_obj = yf.Ticker(ticker)
                 
                 df_1d = ticker_obj.history(period="15d", interval="1d")
@@ -290,7 +325,7 @@ else:
                 dby_value = d_close * shares
                 
                 yesterday_recap.append({
-                    "종목": ticker, 
+                    "종목": kor_name,
                     "그룹": category,
                     "어제변동률": y_change,
                     "어제가치": y_value,
@@ -308,7 +343,8 @@ else:
                 total_invested += float(info['총투자금'])
                 
                 results.append({
-                    "종목": ticker,
+                    "티커": ticker,
+                    "종목명": kor_name,
                     "그룹": category,
                     "보유 수량": shares,
                     "평단가 ($)": round(avg_price, 2),
@@ -378,7 +414,8 @@ else:
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "종목": st.column_config.TextColumn("종목명"),
+                        "티커": st.column_config.TextColumn("티커"),
+                        "종목명": st.column_config.TextColumn("종목명 (한글)"),
                         "그룹": st.column_config.TextColumn("자산군 그룹"),
                         "보유 수량": st.column_config.NumberColumn("수량 (주)", format="%.4f"),
                         "평단가 ($)": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
@@ -453,12 +490,13 @@ else:
                     st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
                 elif len(df) > 0:
                     top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
-                    top_ticker = top_mover['종목']
+                    top_ticker = top_mover['티커']
+                    top_name = top_mover['종목명']
                     top_change = top_mover['당일 변동 (%)']
                     
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
-                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_ticker}** 종목이 **{live_color_text}** 급변동 중입니다.")
+                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_name}({top_ticker})** 종목이 **{live_color_text}** 급변동 중입니다.")
                         st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
                         
                         ai_prompt = f"[{current_kr_time_str} (한국시간) / {current_m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
