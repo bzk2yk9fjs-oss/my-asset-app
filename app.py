@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.6: 검색창 100% 한글 패치 및 스페이스X(SPCX) 반영")
+st.write("V3.7: 검색창 100% 한글 패치 및 실시간 알림 버그 수정")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -204,7 +204,7 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중... (공식 일봉 우선 검색 적용)'):
+        with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중입니다... (공식 일봉 우선 검색 적용)'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
             yesterday_recap = [] 
@@ -489,10 +489,10 @@ else:
                     
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
-                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_name}({top_ticker})** 종목이 **{live_color_text}** 급변동 중입니다.")
+                        st.error(f"🚨 **[특징주 감지: {m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_name}({top_ticker})** 종목이 **{live_color_text}** 급변동 중입니다.")
                         st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
                         
-                        ai_prompt = f"[{current_kr_time_str} (한국시간) / {current_m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
+                        ai_prompt = f"[{current_kr_time_str} (한국시간) / {m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
                         
                         st.code(ai_prompt, language="markdown")
                         st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
