@@ -141,10 +141,10 @@ else:
                 category = get_category(ticker)
                 
                 ticker_obj = yf.Ticker(ticker)
-                # 1d 공식 일봉 다운로드
-                df_1d = ticker_obj.history(period="15d", interval="1d", progress=False)
-                # 5m 예비 분봉 다운로드
-                df_5m = ticker_obj.history(period="15d", interval="5m", prepost=True, progress=False)
+                
+                # 오류 원인 제거: history() 함수에서 progress=False 제거
+                df_1d = ticker_obj.history(period="15d", interval="1d")
+                df_5m = ticker_obj.history(period="15d", interval="5m", prepost=True)
                 
                 # 시간대 정렬
                 if not df_1d.empty:
@@ -163,12 +163,10 @@ else:
                     
                 # [핵심 함수] 일봉 우선 -> 분봉 대체
                 def get_exact_close(d_target):
-                    # 1순위: 오차 0% 일봉 조회
                     if not df_1d.empty:
                         match_1d = df_1d[df_1d['date'] == d_target]
                         if not match_1d.empty and pd.notna(match_1d['Close'].iloc[-1]):
                             return float(match_1d['Close'].iloc[-1])
-                    # 2순위: 지연 시 5분봉 16:00 종가 추출
                     if not df_5m.empty:
                         match_5m = df_5m_reg[df_5m_reg.index.date == d_target]
                         if not match_5m.empty and pd.notna(match_5m['Close'].iloc[-1]):
@@ -185,7 +183,6 @@ else:
                 else:
                     c_price = t_close
                 
-                # 통과 필터 (오류 방어막)
                 if t_close == 0.0:
                     continue
                 
@@ -209,7 +206,6 @@ else:
                 return_percent = ((c_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                # 글로벌 합산 (NaN 감염 원천 차단)
                 total_value += value
                 total_daily_change += change_dollar
                 total_invested += float(info['총투자금'])
@@ -225,8 +221,8 @@ else:
                     "당일 변동 (%)": round(daily_percent, 2)
                 })
             
-            # S&P 500 동일 하이브리드 로직 적용
-            sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d", progress=False)
+            # S&P 500 동일 하이브리드 로직 적용 (여기서도 오류 원인 제거)
+            sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d")
             if not sp_1d.empty:
                 if sp_1d.index.tz is None: sp_1d.index = sp_1d.index.tz_localize(ny_tz)
                 else: sp_1d.index = sp_1d.index.tz_convert(ny_tz)
