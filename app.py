@@ -70,29 +70,36 @@ else:
 
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         
-        with st.spinner('실시간 시세와 차트를 렌더링 중입니다...'):
+        with st.spinner('실시간 시세와 차트를 렌더링 중입니다... (약 10초 소요)'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
             yesterday_recap = [] 
             
-            market_time_info = "가격 정보를 불러오는 중입니다..."
-            price_basis_label = ""
             time_captured = False
             current_kr_time_str = ""
             current_m_state = ""
             is_market_closed = False
-            last_closed_date_str = ""
             
             kr_tz = pytz.timezone('Asia/Seoul')
             ny_tz = pytz.timezone('America/New_York')
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            # [핵심 로직] 오후 4시(16:00) 정규장 마감을 기준으로 '유효 마감일' 컷오프
+            # [필살기] 모든 종목이 동일하게 비교할 기준 날짜 2개를 명시적으로 고정
             if now_ny.hour >= 16:
                 target_date = now_ny.date()
             else:
                 target_date = now_ny.date() - datetime.timedelta(days=1)
+                
+            # 주말 건너뛰기
+            while target_date.weekday() >= 5:
+                target_date -= datetime.timedelta(days=1)
+                
+            prev_target_date = target_date - datetime.timedelta(days=1)
+            while prev_target_date.weekday() >= 5:
+                prev_target_date -= datetime.timedelta(days=1)
+                
+            last_closed_date_str = target_date.strftime('%m/%d')
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -100,55 +107,35 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    # 실시간(현재가) 데이터 (1분봉)
-                    live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    live_data = live_data.dropna(subset=['Close'])
+                    # 1. 일봉 데이터 (공식 종가 확인용)
+                    daily_data = yf.Ticker(ticker).history(period="10d", interval="1d")
+                    if not daily_data.empty:
+                        if daily_data.index.tz is None: daily_data.index = daily_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                        else: daily_data.index = daily_data.index.tz_convert(ny_tz)
                     
-                    # 전일장 성적표 데이터 (일봉)
-                    daily_data = yf.Ticker(ticker).history(period="10d", interval="1d", prepost=False)
-                    daily_data = daily_data.dropna(subset=['Close'])
+                    # 2. 실시간 1분봉 데이터 (현재가 및 지연 종목 대체용)
+                    live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
+                    if live_data.empty: continue
+                    if live_data.index.tz is None: live_data.index = live_data.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else: live_data.index = live_data.index.tz_convert(ny_tz)
                     
-                    if live_data.empty or daily_data.empty: continue
+                    # 날짜 강제 매칭 함수 (일봉 없으면 분봉에서 4시 정각 가격 추출)
+                    def get_exact_close(d_target):
+                        if not daily_data.empty:
+                            match = daily_data[daily_data.index.date == d_target]
+                            if not match.empty: return float(match['Close'].iloc[-1])
+                        # 일봉이 없으면 해당 날짜의 16:00 이전 분봉 가격 사용
+                        match_day = live_data[live_data.index.date == d_target]
+                        match_regular = match_day.between_time('04:00', '16:00')
+                        if not match_regular.empty: return float(match_regular['Close'].iloc[-1])
+                        return None
                     
-                    if live_data.index.tz is None:
-                        live_data.index = live_data.index.tz_localize('UTC').tz_convert(ny_tz)
-                    else:
-                        live_data.index = live_data.index.tz_convert(ny_tz)
-
-                    # [핵심 방어] 일봉 데이터의 날짜만 순수하게 추출 (시간대 변환 에러 차단)
-                    if daily_data.index.tz is not None:
-                        daily_dates = daily_data.index.tz_convert(ny_tz).date
-                    else:
-                        daily_dates = daily_data.index.date
-                    
-                    daily_data['TradeDate'] = daily_dates
-                    
-                    # 장중에 앱을 켜서 아직 안 끝난 '오늘의 미완성 일봉'이 끼어들어오는 것을 원천 필터링
-                    valid_daily = daily_data[daily_data['TradeDate'] <= target_date]
-                    
-                    if len(valid_daily) >= 2:
-                        y_prev_close = float(valid_daily['Close'].iloc[-1])
-                        y_dby_close = float(valid_daily['Close'].iloc[-2])
-                        
-                        last_closed_date_str = valid_daily['TradeDate'].iloc[-1].strftime('%m/%d')
-                        
-                        y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
-                        y_value = y_prev_close * shares
-                        dby_value = y_dby_close * shares
-                        
-                        yesterday_recap.append({
-                            "종목": ticker, 
-                            "그룹": category,
-                            "어제변동률": y_change,
-                            "어제가치": y_value,
-                            "그제가치": dby_value,
-                            "변동액": y_value - dby_value
-                        })
-                        prev_close_for_today = y_prev_close
-                    else:
-                        prev_close_for_today = float(live_data['Close'].iloc[0])
-                        
+                    y_prev_close = get_exact_close(target_date)
+                    y_dby_close = get_exact_close(prev_target_date)
                     current_price = float(live_data['Close'].iloc[-1])
+                    
+                    if y_prev_close is None or y_dby_close is None:
+                        continue
                         
                     if not time_captured:
                         current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
@@ -175,11 +162,24 @@ else:
                         current_m_state = m_state
                         market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
                         time_captured = True
+                        
+                    y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
+                    y_value = y_prev_close * shares
+                    dby_value = y_dby_close * shares
+                    
+                    yesterday_recap.append({
+                        "종목": ticker, 
+                        "그룹": category,
+                        "어제변동률": y_change,
+                        "어제가치": y_value,
+                        "그제가치": dby_value,
+                        "변동액": y_value - dby_value
+                    })
                     
                     value = current_price * shares
-                    change_dollar = (current_price - prev_close_for_today) * shares
+                    change_dollar = (current_price - y_prev_close) * shares
                     return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
-                    daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100 if prev_close_for_today > 0 else 0
+                    daily_percent = ((current_price - y_prev_close) / y_prev_close) * 100 if y_prev_close > 0 else 0
                     
                     total_value += value
                     total_invested += info['총투자금']
@@ -198,21 +198,34 @@ else:
                 except Exception as e: 
                     pass
             
+            # 매크로 지표(S&P 500)도 정확한 날짜 추출 적용
             sp500_change = 0.0
             try:
-                gspc_data = yf.Ticker("^GSPC").history(period="10d", interval="1d")
-                gspc_data = gspc_data.dropna(subset=['Close'])
-                if gspc_data.index.tz is not None:
-                    gspc_dates = gspc_data.index.tz_convert(ny_tz).date
-                else:
-                    gspc_dates = gspc_data.index.date
-                gspc_data['TradeDate'] = gspc_dates
+                gspc_1d = yf.Ticker("^GSPC").history(period="10d", interval="1d")
+                gspc_1m = yf.Ticker("^GSPC").history(period="5d", interval="1m", prepost=False)
                 
-                # S&P 500 지표도 동일하게 미완성 캔들 필터링
-                gspc_valid = gspc_data[gspc_data['TradeDate'] <= target_date]
+                if not gspc_1d.empty:
+                    if gspc_1d.index.tz is None: gspc_1d.index = gspc_1d.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else: gspc_1d.index = gspc_1d.index.tz_convert(ny_tz)
+                if not gspc_1m.empty:
+                    if gspc_1m.index.tz is None: gspc_1m.index = gspc_1m.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else: gspc_1m.index = gspc_1m.index.tz_convert(ny_tz)
                 
-                if len(gspc_valid) >= 2:
-                    sp500_change = ((gspc_valid['Close'].iloc[-1] - gspc_valid['Close'].iloc[-2]) / gspc_valid['Close'].iloc[-2]) * 100
+                def get_sp500_exact(d_target):
+                    if not gspc_1d.empty:
+                        match = gspc_1d[gspc_1d.index.date == d_target]
+                        if not match.empty: return float(match['Close'].iloc[-1])
+                    if not gspc_1m.empty:
+                        match_day = gspc_1m[gspc_1m.index.date == d_target]
+                        match_reg = match_day.between_time('09:30', '16:00')
+                        if not match_reg.empty: return float(match_reg['Close'].iloc[-1])
+                    return None
+                    
+                g_target = get_sp500_exact(target_date)
+                g_prev = get_sp500_exact(prev_target_date)
+                
+                if g_target and g_prev:
+                    sp500_change = ((g_target - g_prev) / g_prev) * 100
             except:
                 pass
 
