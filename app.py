@@ -98,32 +98,20 @@ else:
                 category = get_category(ticker)
                 
                 try:
+                    # 실시간 용 1분봉 데이터
                     live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
+                    # 전일장 성적표 용 일봉 데이터 (확실한 종가)
+                    daily_data = yf.Ticker(ticker).history(period="5d", interval="1d", prepost=False)
                     
-                    if not live_data.empty:
-                        live_data.index = live_data.index.tz_convert(ny_tz)
-                        available_dates = sorted(list(set(live_data.index.date)))
-                        valid_dates = [d for d in available_dates if d <= target_date]
+                    if not live_data.empty and not daily_data.empty:
+                        daily_data.index = daily_data.index.tz_convert(ny_tz)
+                        valid_daily_dates = daily_data[daily_data.index.date <= target_date]
                         
-                        if len(valid_dates) >= 2:
-                            y_date = valid_dates[-1] 
-                            dby_date = valid_dates[-2]
-                            
-                            regular_hours_data = live_data.between_time('09:30', '16:00')
-                            
-                            y_date_data = regular_hours_data[regular_hours_data.index.date == y_date]
-                            dby_date_data = regular_hours_data[regular_hours_data.index.date == dby_date]
-                            
-                            if not y_date_data.empty and not dby_date_data.empty:
-                                y_prev_close = y_date_data['Close'].iloc[-1]
-                                y_dby_close = dby_date_data['Close'].iloc[-1]
-                            else:
-                                daily_fallback = yf.Ticker(ticker).history(period="5d")
-                                daily_fallback.index = daily_fallback.index.tz_convert(ny_tz)
-                                y_prev_close = daily_fallback[daily_fallback.index.date <= target_date]['Close'].iloc[-1]
-                                y_dby_close = daily_fallback[daily_fallback.index.date < target_date]['Close'].iloc[-1]
-
-                            last_closed_date_str = y_date.strftime('%m/%d')
+                        if len(valid_daily_dates) >= 2:
+                            # 팩트 기반 일봉 종가 추출
+                            y_prev_close = valid_daily_dates['Close'].iloc[-1]
+                            y_dby_close = valid_daily_dates['Close'].iloc[-2]
+                            last_closed_date_str = valid_daily_dates.index[-1].strftime('%m/%d')
                             
                             y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
                             y_value = y_prev_close * shares
