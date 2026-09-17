@@ -86,10 +86,13 @@ else:
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            if now_ny.hour >= 20:
-                cutoff_date = now_ny.date()
+            # [핵심 로직 수정] 한국 투자자 관점의 "전일장" 정의 완벽 반영
+            # 뉴욕 시간 기준 18:00 (한국 아침 7시경) 이후면 방금 끝난 그날 미장을 '전일장'으로 확정
+            # 그 이전이면 아직 장이 안 끝났거나 진행 중이므로 이전 날짜를 전일장으로 잡음
+            if now_ny.hour >= 18:
+                target_date = now_ny.date()
             else:
-                cutoff_date = now_ny.date() - datetime.timedelta(days=1)
+                target_date = now_ny.date() - datetime.timedelta(days=1)
             
             for ticker, info in portfolio.items():
                 shares = info['수량']
@@ -97,20 +100,23 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    live_data = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-                    daily_data = yf.Ticker(ticker).history(period="10d", prepost=True)
+                    # 야후 늑장 일봉 데이터를 버리고, 1분봉 데이터로 애프터마켓 마지막 순간까지 강제 추적
+                    live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
                     
-                    if len(live_data) > 0 and len(daily_data) >= 2:
-                        current_price = live_data['Close'].iloc[-1]
+                    if not live_data.empty:
+                        live_data.index = live_data.index.tz_convert(ny_tz)
+                        available_dates = sorted(list(set(live_data.index.date)))
+                        valid_dates = [d for d in available_dates if d <= target_date]
                         
-                        daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        # [버그 픽스] 결측치(NaN) 방어벽 추가
-                        historical_daily = daily_data[daily_data.index.date <= cutoff_date].dropna(subset=['Close'])
-                        
-                        if len(historical_daily) >= 2:
-                            last_closed_date_str = historical_daily.index[-1].strftime('%m/%d')
-                            y_prev_close = historical_daily['Close'].iloc[-1] 
-                            y_dby_close = historical_daily['Close'].iloc[-2]  
+                        if len(valid_dates) >= 2:
+                            y_date = valid_dates[-1]  # 네가 원하는 진짜 '전일장' 날짜
+                            dby_date = valid_dates[-2] # 그제장 날짜
+                            
+                            # 애프터마켓까지 꽉 채운 해당 날짜의 제일 마지막 1분봉 종가 캡처
+                            y_prev_close = live_data[live_data.index.date == y_date]['Close'].iloc[-1]
+                            y_dby_close = live_data[live_data.index.date == dby_date]['Close'].iloc[-1]
+                            
+                            last_closed_date_str = y_date.strftime('%m/%d')
                             
                             y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
                             y_value = y_prev_close * shares
@@ -126,8 +132,10 @@ else:
                             })
                             prev_close_for_today = y_prev_close
                         else:
-                            prev_close_for_today = current_price
+                            prev_close_for_today = live_data['Close'].iloc[-1]
                             
+                        current_price = live_data['Close'].iloc[-1]
+                        
                         if not time_captured:
                             current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
                             t_val = now_ny.hour + now_ny.minute / 60.0
@@ -152,7 +160,7 @@ else:
                         value = current_price * shares
                         change_dollar = (current_price - prev_close_for_today) * shares
                         return_percent = ((current_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0
-                        daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100
+                        daily_percent = ((current_price - prev_close_for_today) / prev_close_for_today) * 100 if prev_close_for_today > 0 else 0
                         
                         total_value += value
                         total_invested += info['총투자금']
@@ -168,14 +176,14 @@ else:
                             "평가액 ($)": round(value, 2),
                             "당일 변동 (%)": round(daily_percent, 2)
                         })
-                except: pass
+                except Exception as e: 
+                    pass
             
             sp500_change = 0.0
             try:
-                gspc_data = yf.Ticker("^GSPC").history(period="10d", prepost=True)
+                gspc_data = yf.Ticker("^GSPC").history(period="10d")
                 gspc_data.index = gspc_data.index.tz_convert(ny_tz)
-                # [버그 픽스] S&P 500 데이터도 결측치 방어
-                gspc_historical = gspc_data[gspc_data.index.date <= cutoff_date].dropna(subset=['Close'])
+                gspc_historical = gspc_data[gspc_data.index.date <= target_date].dropna(subset=['Close'])
                 if len(gspc_historical) >= 2:
                     sp500_change = ((gspc_historical['Close'].iloc[-1] - gspc_historical['Close'].iloc[-2]) / gspc_historical['Close'].iloc[-2]) * 100
             except:
@@ -254,7 +262,6 @@ else:
                     st.write("---")
                     
                     st.markdown("**🏆 포트폴리오 양극단 특징주**")
-                    # [버그 픽스] idxmax 실행 전 결측치 제거로 에러 차단
                     valid_df_y = df_y.dropna(subset=['어제변동률'])
                     if not valid_df_y.empty:
                         top_gainer = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()]
