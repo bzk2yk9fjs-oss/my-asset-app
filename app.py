@@ -11,8 +11,11 @@ import pytz
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("구글 시트 기반 자동화 포트폴리오 및 3단계 시황 브리핑 시스템")
+st.write("Phase 1: 인앱(In-App) 매매 파이프라인 및 통합 모니터링 시스템")
 
+# ==========================================
+# 1. 백엔드 데이터베이스 연결 및 제어 로직
+# ==========================================
 def get_color_text(val, is_percent=True):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
@@ -34,6 +37,17 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
+# [신규 추가] 구글 시트에 매매 기록을 꽂아넣는 함수
+def add_trade(date_str, ticker, trade_type, qty, price):
+    try:
+        creds_dict = json.loads(st.secrets["google_credentials"])
+        gc = gspread.service_account_from_dict(creds_dict)
+        sheet = gc.open("내 주식 장부").sheet1
+        sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price)])
+        return True
+    except Exception as e:
+        return False
+
 def get_category(ticker):
     ticker = ticker.upper()
     if ticker in ['VOO', 'SGOV']: return '코어 (Core)'
@@ -42,10 +56,42 @@ def get_category(ticker):
     elif ticker in ['RGTI', 'ARQQ']: return '모험주 (Adventure)'
     else: return '기타 (Others)'
 
+# ==========================================
+# 2. 사이드바: 매매 컨트롤러 (Input Form)
+# ==========================================
+with st.sidebar:
+    st.header("⚡ 트레이딩 컨트롤러")
+    st.write("앱에서 매매 내역을 입력하면 구글 장부에 즉시 동기화된다.")
+    
+    with st.form(key='trade_form'):
+        t_date = st.date_input("체결 날짜", datetime.date.today())
+        t_ticker = st.text_input("종목 티커 (예: VOO, SPCX)").upper().strip()
+        t_type = st.selectbox("구분", ["매수", "매도"])
+        t_qty = st.number_input("체결 수량", min_value=0.00001, format="%.6f", step=0.1)
+        t_price = st.number_input("체결 가격 ($)", min_value=0.01, format="%.2f", step=1.0)
+        
+        submit_btn = st.form_submit_button(label="장부에 즉시 기록")
+        
+        if submit_btn:
+            if t_ticker:
+                with st.spinner("구글 시트에 데이터를 꽂는 중..."):
+                    success = add_trade(t_date, t_ticker, t_type, t_qty, t_price)
+                    if success:
+                        st.success(f"[{t_ticker}] {t_type} 기록 완료. 장부를 업데이트합니다.")
+                        st.cache_data.clear() # 캐시 강제 파기 (새 데이터 불러오기 위함)
+                        st.rerun() # 앱 강제 새로고침
+                    else:
+                        st.error("기록 실패. API 키 권한이나 시트 형식을 점검해라.")
+            else:
+                st.warning("종목 티커를 정확히 입력해라.")
+
+# ==========================================
+# 3. 프론트엔드 대시보드 렌더링
+# ==========================================
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
+    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다. 왼쪽 사이드바에서 첫 매매를 기록해 보세요.")
 else:
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
@@ -69,7 +115,6 @@ else:
                 portfolio[ticker]['총투자금'] -= (qty * avg_price)
 
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
-        tickers = list(portfolio.keys())
         
         with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중입니다... (공식 일봉 우선 검색 적용)'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
@@ -92,7 +137,6 @@ else:
                 sp500_reg = sp500_5m.between_time('09:30', '16:00')
                 trading_dates = sorted(list(set(sp500_reg.index.date)))
                 
-                # 컷오프(16:00) 기준 유효 날짜 필터링
                 if now_ny.time() >= datetime.time(16, 0):
                     valid_dates = [d for d in trading_dates if d <= now_ny.date()]
                 else:
@@ -142,11 +186,9 @@ else:
                 
                 ticker_obj = yf.Ticker(ticker)
                 
-                # 오류 원인 제거: history() 함수에서 progress=False 제거
                 df_1d = ticker_obj.history(period="15d", interval="1d")
                 df_5m = ticker_obj.history(period="15d", interval="5m", prepost=True)
                 
-                # 시간대 정렬
                 if not df_1d.empty:
                     if df_1d.index.tz is None:
                         df_1d.index = df_1d.index.tz_localize(ny_tz)
@@ -161,7 +203,6 @@ else:
                         df_5m.index = df_5m.index.tz_convert(ny_tz)
                     df_5m_reg = df_5m.between_time('09:30', '16:00')
                     
-                # [핵심 함수] 일봉 우선 -> 분봉 대체
                 def get_exact_close(d_target):
                     if not df_1d.empty:
                         match_1d = df_1d[df_1d['date'] == d_target]
@@ -176,7 +217,6 @@ else:
                 t_close = get_exact_close(target_date)
                 d_close = get_exact_close(prev_target_date)
                 
-                # 3. 라이브 가격 추출
                 if not df_5m.empty:
                     valid_live = df_5m.dropna(subset=['Close'])
                     c_price = float(valid_live['Close'].iloc[-1]) if not valid_live.empty else t_close
@@ -186,7 +226,6 @@ else:
                 if t_close == 0.0:
                     continue
                 
-                # 마감 성적 계산
                 y_change = ((t_close - d_close) / d_close) * 100 if d_close > 0 else 0.0
                 y_value = t_close * shares
                 dby_value = d_close * shares
@@ -200,7 +239,6 @@ else:
                     "변동액": y_value - dby_value
                 })
                 
-                # 현재 라이브 성적 계산
                 value = c_price * shares
                 change_dollar = (c_price - t_close) * shares
                 return_percent = ((c_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0.0
@@ -214,14 +252,13 @@ else:
                     "종목": ticker,
                     "그룹": category,
                     "보유 수량": shares,
-                    "평단가 ($)": round(avg_price, 2),
-                    "현재가 ($)": round(c_price, 2),
-                    "수익률 (%)": round(return_percent, 2),
-                    "평가액 ($)": round(value, 2),
-                    "당일 변동 (%)": round(daily_percent, 2)
+                    "평단가": avg_price,
+                    "현재가": c_price,
+                    "수익률": return_percent,
+                    "평가액": value,
+                    "당일 변동": daily_percent
                 })
             
-            # S&P 500 동일 하이브리드 로직 적용 (여기서도 오류 원인 제거)
             sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d")
             if not sp_1d.empty:
                 if sp_1d.index.tz is None: sp_1d.index = sp_1d.index.tz_localize(ny_tz)
@@ -244,6 +281,10 @@ else:
             if g_target > 0 and g_prev > 0:
                 sp500_change = ((g_target - g_prev) / g_prev) * 100
 
+            # 비중 계산 추가
+            for row in results:
+                row["비중"] = (row["평가액"] / total_value) * 100 if total_value > 0 else 0.0
+
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0.0
 
             st.info(market_time_info)
@@ -264,24 +305,39 @@ else:
             
             if results:
                 df = pd.DataFrame(results)
+                df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
                 
                 st.subheader("📊 포트폴리오 상세 및 리스크 배분 현황")
                 
-                fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
+                fig = px.pie(df, values='평가액', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                def color_positive_negative(val):
-                    if isinstance(val, (int, float)):
-                        if val > 0: return 'color: #09ab3b'
-                        elif val < 0: return 'color: #ff4b4b'
-                        else: return 'color: #808495'
-                    return ''
-                
-                styled_df = df.style.map(color_positive_negative, subset=['수익률 (%)', '당일 변동 (%)'])
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                # 비중 프로그레스 바를 포함한 데이터프레임 렌더링
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "종목": st.column_config.TextColumn("종목"),
+                        "그룹": st.column_config.TextColumn("그룹"),
+                        "보유 수량": st.column_config.NumberColumn("수량 (주)", format="%.4f"),
+                        "평단가": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
+                        "현재가": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
+                        "수익률": st.column_config.NumberColumn("수익률 (%)", format="%.2f%%"),
+                        "당일 변동": st.column_config.NumberColumn("당일 변동 (%)", format="%.2f%%"),
+                        "평가액": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
+                        "비중": st.column_config.ProgressColumn(
+                            "비중 (%)",
+                            help="총 자산 대비 비중",
+                            format="%.2f%%",
+                            min_value=0,
+                            max_value=100
+                        )
+                    }
+                )
                 
                 st.divider()
                 
@@ -339,9 +395,9 @@ else:
                 if is_market_closed:
                     st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
                 elif len(df) > 0:
-                    top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
+                    top_mover = df.loc[df['당일 변동'].abs().idxmax()]
                     top_ticker = top_mover['종목']
-                    top_change = top_mover['당일 변동 (%)']
+                    top_change = top_mover['당일 변동']
                     
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
