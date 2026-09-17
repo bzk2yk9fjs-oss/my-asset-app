@@ -7,11 +7,12 @@ import plotly.express as px
 import streamlit.components.v1 as components
 import datetime
 import pytz
+import requests
 
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("Phase 1: 인앱(In-App) 매매 파이프라인 및 통합 모니터링 시스템")
+st.write("V3.3: 전 종목 티커 자동완성 & 자산군 동적 라우팅 적용")
 
 # ==========================================
 # 1. 백엔드 데이터베이스 연결 및 제어 로직
@@ -37,53 +38,96 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-# [신규 추가] 구글 시트에 매매 기록을 꽂아넣는 함수
-def add_trade(date_str, ticker, trade_type, qty, price):
+def add_trade(date_str, ticker, trade_type, qty, price, group):
     try:
         creds_dict = json.loads(st.secrets["google_credentials"])
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
-        sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price)])
+        sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price), str(group)])
         return True
     except Exception as e:
         return False
 
-def get_category(ticker):
-    ticker = ticker.upper()
-    if ticker in ['VOO', 'SGOV']: return '코어 (Core)'
-    elif ticker in ['KO', 'BAC', 'NEE', 'LMT']: return '방어 (Defensive)'
-    elif ticker in ['IBM', 'SPCX', 'GOOGL']: return '우량주 (Blue Chip)'
-    elif ticker in ['RGTI', 'ARQQ']: return '모험주 (Adventure)'
-    else: return '기타 (Others)'
+@st.cache_data(ttl=86400)
+def get_all_us_tickers():
+    try:
+        # SEC endpoint block 우회 또는 실패시 사용할 수 있는 광범위한 기본 리스트
+        headers = {'User-Agent': 'QuantPortfolioAdmin/1.0 (contact@quantadmin.com)'}
+        url = "https://www.sec.gov/files/company_tickers.json"
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            ticker_list = []
+            for item in data.values():
+                tk = item['ticker'].replace('-', '.')
+                title = item['title']
+                ticker_list.append(f"{tk} | {title}")
+                
+            ticker_list.sort()
+            return ["직접 입력 (티커 수동 입력)"] + ticker_list
+        else:
+            raise Exception("SEC API Error")
+    except Exception:
+        fallback_tickers = [
+            "AAPL | Apple Inc.", "ABBV | AbbVie Inc.", "AMZN | Amazon.com Inc.", 
+            "ARQQ | Arqit Quantum Inc.", "AVGO | Broadcom Inc.", "BAC | Bank of America Corp", 
+            "BRK.B | Berkshire Hathaway Inc.", "CVX | Chevron Corp.", "DIA | SPDR Dow Jones Industrial Average ETF", 
+            "GOOGL | Alphabet Inc.", "HD | Home Depot Inc.", "IBM | International Business Machines Corp.", 
+            "IWM | iShares Russell 2000 ETF", "JEPI | JPMorgan Equity Premium Income ETF", "JNJ | Johnson & Johnson", 
+            "JPM | JPMorgan Chase & Co.", "KO | Coca-Cola Co.", "LMT | Lockheed Martin Corp.", 
+            "MA | Mastercard Inc.", "META | Meta Platforms Inc.", "MRK | Merck & Co. Inc.", 
+            "MSFT | Microsoft Corp.", "NEE | NextEra Energy Inc.", "NVDA | NVIDIA Corp.", 
+            "PEP | PepsiCo Inc.", "PG | Procter & Gamble Co.", "QQQ | Invesco QQQ Trust", 
+            "RGTI | Rigetti Computing Inc.", "SCHD | Schwab US Dividend Equity ETF", "SGOV | iShares 0-3 Month Treasury Bond ETF", 
+            "SOXX | iShares Semiconductor ETF", "SPCX | SPAC and New Issue ETF", "SPY | SPDR S&P 500 ETF Trust", 
+            "TLT | iShares 20+ Year Treasury Bond ETF", "TQQQ | ProShares UltraPro QQQ", "TSLA | Tesla Inc.", 
+            "UNH | UnitedHealth Group Inc.", "V | Visa Inc.", "VOO | Vanguard S&P 500 ETF", "XOM | Exxon Mobil Corp."
+        ]
+        return ["직접 입력 (티커 수동 입력)"] + fallback_tickers
 
 # ==========================================
 # 2. 사이드바: 매매 컨트롤러 (Input Form)
 # ==========================================
+all_us_tickers = get_all_us_tickers()
+
 with st.sidebar:
-    st.header("⚡ 트레이딩 컨트롤러")
-    st.write("앱에서 매매 내역을 입력하면 구글 장부에 즉시 동기화된다.")
+    st.header("⚡ 스마트 트레이딩 룸")
+    if len(all_us_tickers) > 100:
+        st.caption(f"미국 상장 {len(all_us_tickers)-1:,}개 전 종목 데이터 연동됨")
+    else:
+        st.caption("주요 티커 데이터 연동됨 (수동 입력 가능)")
     
     with st.form(key='trade_form'):
         t_date = st.date_input("체결 날짜", datetime.date.today())
-        t_ticker = st.text_input("종목 티커 (예: VOO, SPCX)").upper().strip()
+        
+        selected_option = st.selectbox("🔍 종목 티커/회사명 검색", all_us_tickers)
+        
+        if selected_option == "직접 입력 (티커 수동 입력)":
+            t_ticker = st.text_input("티커 직접 입력 (예: RGTI)").upper().strip()
+        else:
+            t_ticker = selected_option.split(" | ")[0].strip()
+            
         t_type = st.selectbox("구분", ["매수", "매도"])
         t_qty = st.number_input("체결 수량", min_value=0.00001, format="%.6f", step=0.1)
         t_price = st.number_input("체결 가격 ($)", min_value=0.01, format="%.2f", step=1.0)
+        
+        group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "현금/배당 (Cash&DRIP)", "기타 (Others)"]
+        t_group = st.selectbox("🧩 자산군 그룹 지정", group_list)
         
         submit_btn = st.form_submit_button(label="장부에 즉시 기록")
         
         if submit_btn:
             if t_ticker:
-                with st.spinner("구글 시트에 데이터를 꽂는 중..."):
-                    success = add_trade(t_date, t_ticker, t_type, t_qty, t_price)
+                with st.spinner("구글 시트 연동 중..."):
+                    success = add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_group)
                     if success:
-                        st.success(f"[{t_ticker}] {t_type} 기록 완료. 장부를 업데이트합니다.")
-                        st.cache_data.clear() # 캐시 강제 파기 (새 데이터 불러오기 위함)
-                        st.rerun() # 앱 강제 새로고침
+                        st.success(f"[{t_ticker}] 기록 완료! 장부를 동기화합니다.")
+                        st.cache_data.clear()
+                        st.rerun()
                     else:
-                        st.error("기록 실패. API 키 권한이나 시트 형식을 점검해라.")
+                        st.error("기록 실패. 구글 시트 F열에 '그룹' 칸을 만들었는지 확인해라.")
             else:
-                st.warning("종목 티커를 정확히 입력해라.")
+                st.warning("티커를 선택하거나 입력해라.")
 
 # ==========================================
 # 3. 프론트엔드 대시보드 렌더링
@@ -91,17 +135,34 @@ with st.sidebar:
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다. 왼쪽 사이드바에서 첫 매매를 기록해 보세요.")
+    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
 else:
+    group_map = {
+        'VOO': '코어 (Core)', 'SGOV': '코어 (Core)',
+        'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)',
+        'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)',
+        'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)'
+    }
+    
+    if '그룹' in df_trades.columns:
+        for _, row in df_trades.iterrows():
+            tk = str(row.get('종목', '')).strip().upper()
+            grp = str(row.get('그룹', '')).strip()
+            if tk and grp:
+                group_map[tk] = grp
+                
+    def get_category(ticker):
+        return group_map.get(ticker.upper(), '기타 (Others)')
+
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
     with tab1:
         portfolio = {}
         for _, row in df_trades.iterrows():
-            ticker = str(row['종목']).strip().upper()
-            trade_type = str(row['구분']).strip()
+            ticker = str(row.get('종목', '')).strip().upper()
+            trade_type = str(row.get('구분', '')).strip()
             try:
-                qty, price = float(row['수량']), float(row['가격($)'])
+                qty, price = float(row.get('수량', 0)), float(row.get('가격($)', 0))
             except: continue
                 
             if ticker not in portfolio: portfolio[ticker] = {'수량': 0.0, '총투자금': 0.0}
@@ -115,6 +176,7 @@ else:
                 portfolio[ticker]['총투자금'] -= (qty * avg_price)
 
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
+        tickers = list(portfolio.keys())
         
         with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중입니다... (공식 일봉 우선 검색 적용)'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
@@ -126,7 +188,6 @@ else:
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
             now_ny = datetime.datetime.now(ny_tz)
             
-            # 1. 벤치마크(S&P 500) 분봉을 활용하여 '실제 장이 열렸던 유효 날짜' 캘린더 생성
             sp500_5m = yf.Ticker("^GSPC").history(period="15d", interval="5m")
             if not sp500_5m.empty:
                 if sp500_5m.index.tz is None:
@@ -153,7 +214,6 @@ else:
                 st.error("벤치마크 데이터를 가져올 수 없습니다.")
                 st.stop()
             
-            # 시장 상태 텍스트 출력 로직
             current_kr_time_str = now_kr.strftime('%Y년 %m월 %d일 %H:%M')
             t_val = now_ny.hour + now_ny.minute / 60.0
             is_market_closed = False
@@ -178,7 +238,6 @@ else:
                 
             market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
 
-            # 2. 개별 종목 데이터 추출 (하이브리드 스마트 스위칭)
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
                 avg_price = float(info['총투자금']) / shares if shares > 0 else 0
@@ -252,11 +311,11 @@ else:
                     "종목": ticker,
                     "그룹": category,
                     "보유 수량": shares,
-                    "평단가": avg_price,
-                    "현재가": c_price,
-                    "수익률": return_percent,
-                    "평가액": value,
-                    "당일 변동": daily_percent
+                    "평단가 ($)": round(avg_price, 2),
+                    "현재가 ($)": round(c_price, 2),
+                    "수익률 (%)": round(return_percent, 2),
+                    "평가액 ($)": round(value, 2),
+                    "당일 변동 (%)": round(daily_percent, 2)
                 })
             
             sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d")
@@ -268,10 +327,10 @@ else:
             def get_sp500_close(d_target):
                 if not sp_1d.empty:
                     match_1d = sp_1d[sp_1d['date'] == d_target]
-                    if not match_1d.empty and pd.notna(match_1d['Close'].iloc[-1]):
+                    if not match_1d.empty and pd.notna(match_1d['Close'].iloc[-1]) and float(match_1d['Close'].iloc[-1]) > 0:
                         return float(match_1d['Close'].iloc[-1])
                 match_5m = sp500_reg[sp500_reg.index.date == d_target]
-                if not match_5m.empty and pd.notna(match_5m['Close'].iloc[-1]):
+                if not match_5m.empty and pd.notna(match_5m['Close'].iloc[-1]) and float(match_5m['Close'].iloc[-1]) > 0:
                     return float(match_5m['Close'].iloc[-1])
                 return 0.0
                 
@@ -281,9 +340,8 @@ else:
             if g_target > 0 and g_prev > 0:
                 sp500_change = ((g_target - g_prev) / g_prev) * 100
 
-            # 비중 계산 추가
             for row in results:
-                row["비중"] = (row["평가액"] / total_value) * 100 if total_value > 0 else 0.0
+                row["비중"] = (row["평가액 ($)"] / total_value) * 100 if total_value > 0 else 0.0
 
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0.0
 
@@ -309,26 +367,25 @@ else:
                 
                 st.subheader("📊 포트폴리오 상세 및 리스크 배분 현황")
                 
-                fig = px.pie(df, values='평가액', names='그룹', hole=0.4, 
+                fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 비중 프로그레스 바를 포함한 데이터프레임 렌더링
                 st.dataframe(
                     df,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "종목": st.column_config.TextColumn("종목"),
-                        "그룹": st.column_config.TextColumn("그룹"),
+                        "종목": st.column_config.TextColumn("종목명"),
+                        "그룹": st.column_config.TextColumn("자산군 그룹"),
                         "보유 수량": st.column_config.NumberColumn("수량 (주)", format="%.4f"),
-                        "평단가": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
-                        "현재가": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
-                        "수익률": st.column_config.NumberColumn("수익률 (%)", format="%.2f%%"),
-                        "당일 변동": st.column_config.NumberColumn("당일 변동 (%)", format="%.2f%%"),
-                        "평가액": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
+                        "평단가 ($)": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
+                        "현재가 ($)": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
+                        "수익률 (%)": st.column_config.NumberColumn("수익률 (%)", format="%.2f%%"),
+                        "당일 변동 (%)": st.column_config.NumberColumn("당일 변동 (%)", format="%.2f%%"),
+                        "평가액 ($)": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
                         "비중": st.column_config.ProgressColumn(
                             "비중 (%)",
                             help="총 자산 대비 비중",
@@ -395,9 +452,9 @@ else:
                 if is_market_closed:
                     st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
                 elif len(df) > 0:
-                    top_mover = df.loc[df['당일 변동'].abs().idxmax()]
+                    top_mover = df.loc[df['당일 변동 (%)'].abs().idxmax()]
                     top_ticker = top_mover['종목']
-                    top_change = top_mover['당일 변동']
+                    top_change = top_mover['당일 변동 (%)']
                     
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
