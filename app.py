@@ -75,6 +75,7 @@ else:
             yesterday_recap = [] 
             
             market_time_info = "가격 정보를 불러오는 중입니다..."
+            price_basis_label = ""
             time_captured = False
             current_kr_time_str = ""
             current_m_state = ""
@@ -86,9 +87,6 @@ else:
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            # [핵심 로직 수정] 한국 투자자 관점의 "전일장" 정의 완벽 반영
-            # 뉴욕 시간 기준 18:00 (한국 아침 7시경) 이후면 방금 끝난 그날 미장을 '전일장'으로 확정
-            # 그 이전이면 아직 장이 안 끝났거나 진행 중이므로 이전 날짜를 전일장으로 잡음
             if now_ny.hour >= 18:
                 target_date = now_ny.date()
             else:
@@ -100,7 +98,6 @@ else:
                 category = get_category(ticker)
                 
                 try:
-                    # 야후 늑장 일봉 데이터를 버리고, 1분봉 데이터로 애프터마켓 마지막 순간까지 강제 추적
                     live_data = yf.Ticker(ticker).history(period="5d", interval="1m", prepost=True)
                     
                     if not live_data.empty:
@@ -109,13 +106,23 @@ else:
                         valid_dates = [d for d in available_dates if d <= target_date]
                         
                         if len(valid_dates) >= 2:
-                            y_date = valid_dates[-1]  # 네가 원하는 진짜 '전일장' 날짜
-                            dby_date = valid_dates[-2] # 그제장 날짜
+                            y_date = valid_dates[-1] 
+                            dby_date = valid_dates[-2]
                             
-                            # 애프터마켓까지 꽉 채운 해당 날짜의 제일 마지막 1분봉 종가 캡처
-                            y_prev_close = live_data[live_data.index.date == y_date]['Close'].iloc[-1]
-                            y_dby_close = live_data[live_data.index.date == dby_date]['Close'].iloc[-1]
+                            regular_hours_data = live_data.between_time('09:30', '16:00')
                             
+                            y_date_data = regular_hours_data[regular_hours_data.index.date == y_date]
+                            dby_date_data = regular_hours_data[regular_hours_data.index.date == dby_date]
+                            
+                            if not y_date_data.empty and not dby_date_data.empty:
+                                y_prev_close = y_date_data['Close'].iloc[-1]
+                                y_dby_close = dby_date_data['Close'].iloc[-1]
+                            else:
+                                daily_fallback = yf.Ticker(ticker).history(period="5d")
+                                daily_fallback.index = daily_fallback.index.tz_convert(ny_tz)
+                                y_prev_close = daily_fallback[daily_fallback.index.date <= target_date]['Close'].iloc[-1]
+                                y_dby_close = daily_fallback[daily_fallback.index.date < target_date]['Close'].iloc[-1]
+
                             last_closed_date_str = y_date.strftime('%m/%d')
                             
                             y_change = ((y_prev_close - y_dby_close) / y_dby_close) * 100
@@ -141,20 +148,25 @@ else:
                             t_val = now_ny.hour + now_ny.minute / 60.0
                             
                             if now_ny.weekday() >= 5: 
-                                m_state = "⚫ 장 마감 (Weekend)"
+                                m_state = "⚫ 주말 (애프터 마켓 최종 마감 가격 유지)"
+                                price_basis_label = "애프터 마켓 최종 마감 가격"
                                 is_market_closed = True
                             elif 4.0 <= t_val < 9.5:
-                                m_state = "🟡 프리마켓 (Pre-market)"
+                                m_state = "🟡 프리마켓 진행 중"
+                                price_basis_label = "실시간 프리마켓 가격"
                             elif 9.5 <= t_val < 16.0:
-                                m_state = "🟢 본장 (Regular Market)"
+                                m_state = "🟢 본장 진행 중"
+                                price_basis_label = "실시간 본장 가격"
                             elif 16.0 <= t_val < 20.0:
-                                m_state = "🔵 애프터마켓 (After-hours)"
+                                m_state = "🔵 애프터 마켓 진행 중"
+                                price_basis_label = "실시간 애프터 마켓 가격"
                             else:
-                                m_state = "⚫ 장 마감 (Closed)"
+                                m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
+                                price_basis_label = "애프터 마켓 최종 마감 가격"
                                 is_market_closed = True
                                 
                             current_m_state = m_state
-                            market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국 시간) | **현재 상태:** {m_state}"
+                            market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
                             time_captured = True
                         
                         value = current_price * shares
@@ -195,7 +207,7 @@ else:
             col1, col2 = st.columns(2)
             
             col1.metric(
-                label="총 자산 평가액 (USD)", 
+                label=f"총 자산 평가액 (USD) - [{price_basis_label}]", 
                 value=f"${total_value:,.2f}", 
                 delta=f"{total_daily_change:,.2f} USD (오늘의 변동)"
             )
@@ -232,7 +244,7 @@ else:
                 
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 
-                st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 애프터마켓 종료 기준)")
+                st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 정규장 마감 기준)")
                 if yesterday_recap:
                     df_y = pd.DataFrame(yesterday_recap)
                     
@@ -290,10 +302,10 @@ else:
                     
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
-                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str}\n\n현재 장에서 **{top_ticker}** 종목이 **{live_color_text}** 급변동 중입니다.")
+                        st.error(f"🚨 **[특징주 감지: {current_m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_ticker}** 종목이 **{live_color_text}** 급변동 중입니다.")
                         st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
                         
-                        ai_prompt = f"[{current_kr_time_str} / {current_m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
+                        ai_prompt = f"[{current_kr_time_str} (한국시간) / {current_m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
                         
                         st.code(ai_prompt, language="markdown")
                         st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
