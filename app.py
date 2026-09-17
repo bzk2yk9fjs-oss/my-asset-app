@@ -86,7 +86,6 @@ else:
             now_kr = datetime.datetime.now(kr_tz)
             now_ny = datetime.datetime.now(ny_tz)
             
-            # [핵심 로직] '가장 최근에 완전히 마감된 시장'의 날짜 기준점 (뉴욕 20시 애프터마켓 종료 기준)
             if now_ny.hour >= 20:
                 cutoff_date = now_ny.date()
             else:
@@ -105,7 +104,8 @@ else:
                         current_price = live_data['Close'].iloc[-1]
                         
                         daily_data.index = daily_data.index.tz_convert(ny_tz)
-                        historical_daily = daily_data[daily_data.index.date <= cutoff_date]
+                        # [버그 픽스] 결측치(NaN) 방어벽 추가
+                        historical_daily = daily_data[daily_data.index.date <= cutoff_date].dropna(subset=['Close'])
                         
                         if len(historical_daily) >= 2:
                             last_closed_date_str = historical_daily.index[-1].strftime('%m/%d')
@@ -170,12 +170,12 @@ else:
                         })
                 except: pass
             
-            # [추가] S&P 500 벤치마크 데이터 로드
             sp500_change = 0.0
             try:
                 gspc_data = yf.Ticker("^GSPC").history(period="10d", prepost=True)
                 gspc_data.index = gspc_data.index.tz_convert(ny_tz)
-                gspc_historical = gspc_data[gspc_data.index.date <= cutoff_date]
+                # [버그 픽스] S&P 500 데이터도 결측치 방어
+                gspc_historical = gspc_data[gspc_data.index.date <= cutoff_date].dropna(subset=['Close'])
                 if len(gspc_historical) >= 2:
                     sp500_change = ((gspc_historical['Close'].iloc[-1] - gspc_historical['Close'].iloc[-2]) / gspc_historical['Close'].iloc[-2]) * 100
             except:
@@ -228,7 +228,6 @@ else:
                 if yesterday_recap:
                     df_y = pd.DataFrame(yesterday_recap)
                     
-                    # 1 & 4. 계좌 총괄 및 벤치마크 비교
                     total_dby = df_y['그제가치'].sum()
                     total_y = df_y['어제가치'].sum()
                     total_change_dollar = total_y - total_dby
@@ -242,7 +241,6 @@ else:
                     
                     st.write("---")
                     
-                    # 2. 그룹별 기여도
                     st.markdown("**🧩 섹터/그룹별 기여도**")
                     grp_agg = df_y.groupby('그룹').agg({'그제가치': 'sum', '어제가치': 'sum', '변동액': 'sum'}).reset_index()
                     grp_agg['수익률'] = (grp_agg['변동액'] / grp_agg['그제가치']) * 100
@@ -255,16 +253,20 @@ else:
                     
                     st.write("---")
                     
-                    # 3. 최고 & 최악 종목 (Top & Bottom)
                     st.markdown("**🏆 포트폴리오 양극단 특징주**")
-                    top_gainer = df_y.loc[df_y['어제변동률'].idxmax()]
-                    top_loser = df_y.loc[df_y['어제변동률'].idxmin()]
-                    
-                    c_gainer, c_loser = st.columns(2)
-                    with c_gainer:
-                        st.success(f"🚀 **최고 효자:** {top_gainer['종목']} ({get_color_text(top_gainer['어제변동률'])})")
-                    with c_loser:
-                        st.error(f"📉 **최대 구멍:** {top_loser['종목']} ({get_color_text(top_loser['어제변동률'])})")
+                    # [버그 픽스] idxmax 실행 전 결측치 제거로 에러 차단
+                    valid_df_y = df_y.dropna(subset=['어제변동률'])
+                    if not valid_df_y.empty:
+                        top_gainer = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()]
+                        top_loser = valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
+                        
+                        c_gainer, c_loser = st.columns(2)
+                        with c_gainer:
+                            st.success(f"🚀 **최고 효자:** {top_gainer['종목']} ({get_color_text(top_gainer['어제변동률'])})")
+                        with c_loser:
+                            st.error(f"📉 **최대 구멍:** {top_loser['종목']} ({get_color_text(top_loser['어제변동률'])})")
+                    else:
+                        st.info("비교할 수 있는 유효한 등락 데이터가 없습니다.")
                 else:
                     st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
@@ -295,10 +297,7 @@ else:
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
-        
         st.markdown("### 1. S&P 500 섹터 히트맵 (TradingView)")
-        st.write("미국 증시 전반의 붉고 푸른 흐름을 직관적으로 확인하세요.")
-        
         components.html(
             '''
             <div class="tradingview-widget-container">
@@ -326,10 +325,8 @@ else:
         
         st.divider()
         st.markdown("### 2. Fear and Greed Index (공포와 탐욕 지수)")
-        st.write("시장 참여자들의 실시간 심리 상태를 확인하세요.")
         st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
         
         st.divider()
         st.markdown("### 3. CME FedWatch Tool (금리 예측)")
-        st.write("미 연준(Fed)의 다음 기준금리 결정 확률을 실시간 추적합니다.")
         st.markdown("👉 **[🔗 CME FedWatch Tool 실시간 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
