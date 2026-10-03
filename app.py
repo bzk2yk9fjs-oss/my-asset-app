@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.3: 달러/원화 수익률 대칭 비교 뷰 적용 및 출금액 로직 제거")
+st.write("V4.5: 상단 메트릭 패널 순서 변경 (수익률 KRW -> 총 평가액 KRW)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -70,7 +70,6 @@ def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
         creds_dict = json.loads(st.secrets["google_credentials"])
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
-        # 구글 시트에 매수환율 데이터까지 포함하여 기록 (열 순서 일치 주의)
         sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price), float(fx), str(group)])
         return True
     except Exception as e:
@@ -150,7 +149,6 @@ with st.sidebar:
         with col_price:
             t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
             
-        # 환율 입력 필드 (현재 실시간 환율을 디폴트 값으로 제공)
         t_fx = st.number_input("체결 환율 (원)", value=float(current_live_fx), min_value=0.00, format="%.2f", step=1.0, help="매수/매도 당시의 적용 환율을 입력하세요.")
         
         group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]
@@ -206,7 +204,6 @@ else:
             try:
                 qty = float(row.get('수량', 0))
                 price = float(row.get('가격($)', 0))
-                # 구글 시트에 환율이 비어있을 경우를 대비한 예외 처리
                 fx_val = row.get('환율', current_live_fx)
                 fx = float(fx_val) if pd.notna(fx_val) and fx_val != '' else current_live_fx
             except: continue
@@ -296,7 +293,6 @@ else:
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
                 avg_usd_price = float(info['총투자금USD']) / shares if shares > 0 else 0
-                # 개별 종목의 가중평균 매입환율 도출
                 avg_purchase_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_base_rate
                 category = get_category(ticker)
                 kor_name = KOR_NAMES.get(ticker, ticker)
@@ -355,7 +351,6 @@ else:
                 return_percent = ((c_price - avg_usd_price) / avg_usd_price) * 100 if avg_usd_price > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                # 핵심: 해당 종목의 환차손익 계산 (매수 달러원금 * (현재환율 - 매입환율))
                 stock_fx_gain_loss = info['총투자금USD'] * (current_base_rate - avg_purchase_fx)
                 
                 total_value_usd += value_usd
@@ -402,19 +397,16 @@ else:
             for row in results:
                 row["비중"] = (row["평가액 ($)"] / total_value_usd) * 100 if total_value_usd > 0 else 0.0
 
-            # 자산 평가 지표 종합 계산
             total_all_time_return_usd = ((total_value_usd - total_invested_usd) / total_invested_usd) * 100 if total_invested_usd > 0 else 0.0
             
             total_value_krw_base = total_value_usd * current_base_rate
-            
-            # 총 누적 수익 (원화 기준) = (현재 총달러 * 현재환율) - 총 투입원금(KRW)
             total_invested_krw = sum(portfolio[tk]['총투자금KRW'] for tk in portfolio)
             total_profit_krw = total_value_krw_base - total_invested_krw
             total_return_pct_krw = (total_profit_krw / total_invested_krw) * 100 if total_invested_krw > 0 else 0.0
 
             st.info(market_time_info)
             
-            # 달러와 원화 성과를 대칭적으로 보여주는 4열 구조
+            # 네가 요청한 순서대로 재배치 (USD 총액 -> USD 수익률 -> KRW 수익률 -> KRW 총액)
             col1, col2, col3, col4 = st.columns(4)
             
             col1.metric(
@@ -428,15 +420,15 @@ else:
                 delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
             )
             col3.metric(
+                label="총 누적 수익률 (KRW 기준)", 
+                value=f"{total_return_pct_krw:+.2f}%", 
+                delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
+            )
+            col4.metric(
                 label="총 평가액 (KRW)", 
                 value=f"{int(total_value_krw_base):,} 원", 
                 delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
                 delta_color="normal"
-            )
-            col4.metric(
-                label="총 누적 수익률 (KRW 기준)", 
-                value=f"{total_return_pct_krw:+.2f}%", 
-                delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
             )
             
             st.divider()
