@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.1: 미래에셋 기준 환전 수수료 적용 및 즉시 현금화(Cash-out) 금액 추적기")
+st.write("V4.2: 개별 종목 매입환율 기록 및 실시간 환차손익(FX Gain/Loss) 추적기 탑재")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -65,17 +65,17 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-def add_trade(date_str, ticker, trade_type, qty, price, group):
+def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
     try:
         creds_dict = json.loads(st.secrets["google_credentials"])
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
-        sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price), str(group)])
+        # 구글 시트에 매수환율 데이터까지 포함하여 기록 (열 순서 일치 주의)
+        sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price), float(fx), str(group)])
         return True
     except Exception as e:
         return False
 
-# 글로벌 기준환율 호출 (미래에셋 기준환율 프록시)
 @st.cache_data(ttl=300) 
 def get_exchange_rate():
     try:
@@ -123,11 +123,12 @@ def get_all_us_tickers():
 # 2. 사이드바: 매매 컨트롤러 (Input Form)
 # ==========================================
 all_us_tickers = get_all_us_tickers()
+current_live_fx = get_exchange_rate()
 
 with st.sidebar:
     st.header("⚡ 스마트 트레이딩 룸")
     if len(all_us_tickers) > 100:
-        st.caption(f"미국 상장 {len(all_us_tickers)-1:,}개 종목 연동됨 (ETF 포함)")
+        st.caption(f"미국 상장 {len(all_us_tickers)-1:,}개 종목 연동됨")
     else:
         st.caption("주요 티커 데이터 연동됨 (수동 입력 가능)")
     
@@ -143,8 +144,14 @@ with st.sidebar:
             
         t_type = st.selectbox("구분", ["매수", "매도"])
         
-        t_qty = st.number_input("체결 수량", value=0.00, min_value=0.00, format="%.2f", step=1.0)
-        t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
+        col_qty, col_price = st.columns(2)
+        with col_qty:
+            t_qty = st.number_input("체결 수량", value=0.00, min_value=0.00, format="%.2f", step=1.0)
+        with col_price:
+            t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
+            
+        # 환율 입력 필드 (현재 실시간 환율을 디폴트 값으로 제공)
+        t_fx = st.number_input("체결 환율 (원)", value=float(current_live_fx), min_value=0.00, format="%.2f", step=1.0, help="매수/매도 당시의 적용 환율을 입력하세요.")
         
         group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]
         t_group = st.selectbox("🧩 자산군 그룹 지정", group_list)
@@ -154,13 +161,13 @@ with st.sidebar:
         if submit_btn:
             if t_ticker:
                 with st.spinner("구글 시트 연동 중..."):
-                    success = add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_group)
+                    success = add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_fx, t_group)
                     if success:
                         st.success(f"[{t_ticker}] 기록 완료! 장부를 동기화합니다.")
                         st.cache_data.clear()
                         st.rerun()
                     else:
-                        st.error("기록 실패. 구글 시트 권한을 점검해라.")
+                        st.error("기록 실패. 구글 시트의 열(Column) 구조에 '환율'이 추가되었는지 확인해라.")
             else:
                 st.warning("티커를 선택하거나 입력해라.")
 
@@ -170,7 +177,7 @@ with st.sidebar:
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다.")
+    st.warning("데이터를 불러오는 중이거나 구글 장부가 비어있습니다. (구글 시트에 '환율' 열을 반드시 추가하세요)")
 else:
     group_map = {
         'VOO': '코어 (Core)', 'SGOV': '코어 (Core)',
@@ -197,32 +204,40 @@ else:
             ticker = str(row.get('종목', '')).strip().upper()
             trade_type = str(row.get('구분', '')).strip()
             try:
-                qty, price = float(row.get('수량', 0)), float(row.get('가격($)', 0))
+                qty = float(row.get('수량', 0))
+                price = float(row.get('가격($)', 0))
+                # 구글 시트에 환율이 비어있을 경우를 대비한 예외 처리
+                fx_val = row.get('환율', current_live_fx)
+                fx = float(fx_val) if pd.notna(fx_val) and fx_val != '' else current_live_fx
             except: continue
                 
-            if ticker not in portfolio: portfolio[ticker] = {'수량': 0.0, '총투자금': 0.0}
+            if ticker not in portfolio: 
+                portfolio[ticker] = {'수량': 0.0, '총투자금USD': 0.0, '총투자금KRW': 0.0}
                 
             if trade_type == '매수':
                 portfolio[ticker]['수량'] += qty
-                portfolio[ticker]['총투자금'] += (qty * price)
+                portfolio[ticker]['총투자금USD'] += (qty * price)
+                portfolio[ticker]['총투자금KRW'] += (qty * price * fx)
             elif trade_type == '매도' and portfolio[ticker]['수량'] > 0:
-                avg_price = portfolio[ticker]['총투자금'] / portfolio[ticker]['수량']
+                avg_usd = portfolio[ticker]['총투자금USD'] / portfolio[ticker]['수량']
+                avg_krw = portfolio[ticker]['총투자금KRW'] / portfolio[ticker]['수량']
                 portfolio[ticker]['수량'] -= qty
-                portfolio[ticker]['총투자금'] -= (qty * avg_price)
+                portfolio[ticker]['총투자금USD'] -= (qty * avg_usd)
+                portfolio[ticker]['총투자금KRW'] -= (qty * avg_krw)
 
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('실시간 시장 데이터 및 환전 수수료 산출 중...'):
-            total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
+        with st.spinner('실시간 데이터 연동 및 환차손익 산출 중...'):
+            total_value_usd, total_invested_usd = 0.0, 0.0
+            total_daily_change_usd = 0.0
+            total_fx_gain_loss_krw = 0.0
+            
             results = []
             yesterday_recap = [] 
             sp500_change = 0.0
             
-            # 실시간 기준환율 호출
-            current_base_rate = get_exchange_rate()
-            
-            # 환전 수수료 계산 (미래에셋 기본 스프레드 1% + 환율우대 95% 가정 = 실제 수수료율 0.05%)
+            current_base_rate = current_live_fx
             exchange_fee_rate = 0.01 * (1 - 0.95)
             sell_rate = current_base_rate * (1 - exchange_fee_rate)
             
@@ -282,28 +297,24 @@ else:
 
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
-                avg_price = float(info['총투자금']) / shares if shares > 0 else 0
+                avg_usd_price = float(info['총투자금USD']) / shares if shares > 0 else 0
+                # 개별 종목의 가중평균 매입환율 도출
+                avg_purchase_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_base_rate
                 category = get_category(ticker)
-                
                 kor_name = KOR_NAMES.get(ticker, ticker)
                 
                 ticker_obj = yf.Ticker(ticker)
-                
                 df_1d = ticker_obj.history(period="15d", interval="1d")
                 df_5m = ticker_obj.history(period="15d", interval="5m", prepost=True)
                 
                 if not df_1d.empty:
-                    if df_1d.index.tz is None:
-                        df_1d.index = df_1d.index.tz_localize(ny_tz)
-                    else:
-                        df_1d.index = df_1d.index.tz_convert(ny_tz)
+                    if df_1d.index.tz is None: df_1d.index = df_1d.index.tz_localize(ny_tz)
+                    else: df_1d.index = df_1d.index.tz_convert(ny_tz)
                     df_1d['date'] = df_1d.index.date
                     
                 if not df_5m.empty:
-                    if df_5m.index.tz is None:
-                        df_5m.index = df_5m.index.tz_localize('UTC').tz_convert(ny_tz)
-                    else:
-                        df_5m.index = df_5m.index.tz_convert(ny_tz)
+                    if df_5m.index.tz is None: df_5m.index = df_5m.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else: df_5m.index = df_5m.index.tz_convert(ny_tz)
                     df_5m_reg = df_5m.between_time('09:30', '16:00')
                     
                 def get_exact_close(d_target):
@@ -326,8 +337,7 @@ else:
                 else:
                     c_price = t_close
                 
-                if t_close == 0.0:
-                    continue
+                if t_close == 0.0: continue
                 
                 y_change = ((t_close - d_close) / d_close) * 100 if d_close > 0 else 0.0
                 y_value = t_close * shares
@@ -342,25 +352,31 @@ else:
                     "변동액": y_value - dby_value
                 })
                 
-                value = c_price * shares
+                value_usd = c_price * shares
                 change_dollar = (c_price - t_close) * shares
-                return_percent = ((c_price - avg_price) / avg_price) * 100 if avg_price > 0 else 0.0
+                return_percent = ((c_price - avg_usd_price) / avg_usd_price) * 100 if avg_usd_price > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                total_value += value
-                total_daily_change += change_dollar
-                total_invested += float(info['총투자금'])
+                # 핵심: 해당 종목의 환차손익 계산 (매수 달러원금 * (현재환율 - 매입환율))
+                stock_fx_gain_loss = info['총투자금USD'] * (current_base_rate - avg_purchase_fx)
+                
+                total_value_usd += value_usd
+                total_daily_change_usd += change_dollar
+                total_invested_usd += float(info['총투자금USD'])
+                total_fx_gain_loss_krw += stock_fx_gain_loss
                 
                 results.append({
                     "티커": ticker,
                     "종목명": kor_name,
                     "그룹": category,
                     "보유 수량": shares,
-                    "평단가 ($)": round(avg_price, 2),
+                    "평단가 ($)": round(avg_usd_price, 2),
                     "현재가 ($)": round(c_price, 2),
+                    "매입환율": round(avg_purchase_fx, 2),
+                    "환차손익(KRW)": int(stock_fx_gain_loss),
                     "수익률 (%)": round(return_percent, 2),
-                    "평가액 ($)": round(value, 2),
-                    "당일 변동 (%)": round(daily_percent, 2)
+                    "당일 변동 (%)": round(daily_percent, 2),
+                    "평가액 ($)": round(value_usd, 2)
                 })
             
             sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d")
@@ -386,35 +402,40 @@ else:
                 sp500_change = ((g_target - g_prev) / g_prev) * 100
 
             for row in results:
-                row["비중"] = (row["평가액 ($)"] / total_value) * 100 if total_value > 0 else 0.0
+                row["비중"] = (row["평가액 ($)"] / total_value_usd) * 100 if total_value_usd > 0 else 0.0
 
-            total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0.0
+            # 자산 평가 지표 종합 계산
+            total_all_time_return_usd = ((total_value_usd - total_invested_usd) / total_invested_usd) * 100 if total_invested_usd > 0 else 0.0
             
-            # 원화 자산 환산 (장부상 가치 vs 실제 현금화 가치)
-            total_value_krw_base = total_value * current_base_rate
-            total_value_krw_cashout = total_value * sell_rate
+            total_value_krw_base = total_value_usd * current_base_rate
+            total_value_krw_cashout = total_value_usd * sell_rate
             estimated_fee = total_value_krw_base - total_value_krw_cashout
+            
+            # 총 누적 수익 (원화 기준) = (현재 총달러 * 현재환율) - 총 투입원금(KRW)
+            total_invested_krw = sum(portfolio[tk]['총투자금KRW'] for tk in portfolio)
+            total_profit_krw = total_value_krw_base - total_invested_krw
+            total_return_pct_krw = (total_profit_krw / total_invested_krw) * 100 if total_invested_krw > 0 else 0.0
 
             st.info(market_time_info)
             
-            # 직관적인 4열 구조로 지표 재배치
+            # 메트릭스를 사용자의 의도에 맞게 직관적으로 재구성
             col1, col2, col3, col4 = st.columns(4)
             
             col1.metric(
                 label=f"총 평가액 (USD) - [{price_basis_label}]", 
-                value=f"${total_value:,.2f}", 
-                delta=f"{total_daily_change:,.2f} USD (오늘의 변동)"
+                value=f"${total_value_usd:,.2f}", 
+                delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
             )
             col2.metric(
-                label="총 누적 수익률", 
-                value=f"{total_all_time_return:+.2f}%", 
-                delta=f"{(total_value - total_invested):,.2f} USD (총 손익)"
+                label="총 평가액 (KRW)", 
+                value=f"{int(total_value_krw_base):,} 원", 
+                delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
+                delta_color="normal"
             )
             col3.metric(
-                label="장부상 평가액 (KRW)", 
-                value=f"{int(total_value_krw_base):,} 원", 
-                delta=f"기준환율: {current_base_rate:,.2f} 원",
-                delta_color="off"
+                label="총 누적 수익률 (KRW 기준)", 
+                value=f"{total_return_pct_krw:+.2f}%", 
+                delta=f"{int(total_profit_krw):,} 원 (주식손익+환차손익 포함)"
             )
             col4.metric(
                 label="💸 즉시 출금 예상액 (KRW)", 
@@ -429,7 +450,7 @@ else:
                 df = pd.DataFrame(results)
                 df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
                 
-                st.subheader("📊 포트폴리오 상세 및 리스크 배분 현황")
+                st.subheader("📊 포트폴리오 상세 (주식 성과 및 환차손익 분리)")
                 
                 fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
                              color_discrete_sequence=px.colors.qualitative.Pastel)
@@ -445,19 +466,15 @@ else:
                         "티커": st.column_config.TextColumn("티커"),
                         "종목명": st.column_config.TextColumn("종목명 (한글)"),
                         "그룹": st.column_config.TextColumn("자산군 그룹"),
-                        "보유 수량": st.column_config.NumberColumn("수량 (주)", format="%.4f"),
-                        "평단가 ($)": st.column_config.NumberColumn("평단가 ($)", format="$%.2f"),
-                        "현재가 ($)": st.column_config.NumberColumn("현재가 ($)", format="$%.2f"),
-                        "수익률 (%)": st.column_config.NumberColumn("수익률 (%)", format="%.2f%%"),
-                        "당일 변동 (%)": st.column_config.NumberColumn("당일 변동 (%)", format="%.2f%%"),
-                        "평가액 ($)": st.column_config.NumberColumn("평가액 ($)", format="$%.2f"),
-                        "비중": st.column_config.ProgressColumn(
-                            "비중 (%)",
-                            help="총 자산 대비 비중",
-                            format="%.2f%%",
-                            min_value=0,
-                            max_value=100
-                        )
+                        "보유 수량": st.column_config.NumberColumn("수량", format="%.4f"),
+                        "평단가 ($)": st.column_config.NumberColumn("평단가($)", format="$%.2f"),
+                        "현재가 ($)": st.column_config.NumberColumn("현재가($)", format="$%.2f"),
+                        "매입환율": st.column_config.NumberColumn("매입환율(원)", format="%.2f"),
+                        "환차손익(KRW)": st.column_config.NumberColumn("환차손익(원)"),
+                        "수익률 (%)": st.column_config.NumberColumn("주식수익률(%)", format="%.2f%%"),
+                        "당일 변동 (%)": st.column_config.NumberColumn("당일변동(%)", format="%.2f%%"),
+                        "평가액 ($)": st.column_config.NumberColumn("평가액($)", format="$%.2f"),
+                        "비중": st.column_config.ProgressColumn("비중(%)", format="%.2f%%", min_value=0, max_value=100)
                     }
                 )
                 
