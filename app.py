@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.9: 자산군 그룹 '모멘텀 (Momentum)' 변경 적용")
+st.write("V3.10: 사이드바 매매 입력 폼 UX 개선 (소수점 2자리 및 증감 단위 1로 고정)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -77,7 +77,6 @@ def add_trade(date_str, ticker, trade_type, qty, price, group):
 
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
-    # SEC 데이터에 누락되기 쉬운 핵심 ETF 및 개별주 레버리지
     core_etf_tickers = [
         'SPY', 'QQQ', 'DIA', 'TQQQ', 'SQQQ', 'SOXL', 'SOXS', 'UPRO', 'SSO', 'QLD', 
         'SOXX', 'USD', 'SCHD', 'JEPI', 'TLT', 'VOO', 'SGOV', 'SNXX', 'NVDL', 'TSLL', 'CONL'
@@ -94,7 +93,6 @@ def get_all_us_tickers():
             for item in data.values():
                 tk = item['ticker'].replace('-', '.')
                 if tk not in core_etf_tickers:
-                    # SEC 영어 이름 대신, KOR_NAMES 사전에 한글 이름이 있다면 가로채서 번역 적용
                     title = KOR_NAMES.get(tk, item['title'])
                     ticker_list.append(f"{tk} | {title}")
                 
@@ -134,10 +132,11 @@ with st.sidebar:
             t_ticker = selected_option.split(" | ")[0].strip()
             
         t_type = st.selectbox("구분", ["매수", "매도"])
-        t_qty = st.number_input("체결 수량", min_value=0.00001, format="%.6f", step=0.1)
+        
+        # 수량과 가격 모두 소수점 2자리 제한 및 스텝 1.0 적용
+        t_qty = st.number_input("체결 수량", min_value=0.01, format="%.2f", step=1.0)
         t_price = st.number_input("체결 가격 ($)", min_value=0.01, format="%.2f", step=1.0)
         
-        # '테마주'를 빼고 '모멘텀 (Momentum)'으로 반영
         group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "현금/배당 (Cash&DRIP)", "기타 (Others)"]
         t_group = st.selectbox("🧩 자산군 그룹 지정", group_list)
         
@@ -491,7 +490,7 @@ else:
                     if abs(top_change) >= 3.0:
                         live_color_text = get_color_text(top_change)
                         st.error(f"🚨 **[특징주 감지: {m_state}]**\n\n**조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n현재 장에서 **{top_name}({top_ticker})** 종목이 **{live_color_text}** 급변동 중입니다.")
-                        st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트 복사하여 AI 비서(채팅창)에게 질문하세요.")
+                        st.write("해당 움직임의 원인과 대응 전략을 파악하기 위해 아래 텍스트를 복사하여 AI 비서(채팅창)에게 질문하세요.")
                         
                         ai_prompt = f"[{current_kr_time_str} (한국시간) / {m_state} 기준]\n지금 내 포트폴리오의 [{top_ticker}] 종목이 실시간으로 {top_change:+.2f}% 급변동하고 있다. \n반드시 1단계: 실시간 가격 확인, 2단계: 뉴스 매칭, 3단계: 정합성 검증의 프로세스를 거쳐서 이 변동의 진짜 이유를 외신과 공시 데이터를 기반으로 찾아내라. \n감언이설이나 뻔한 소리는 빼고, 현재 상황이 내 포트폴리오에 미칠 영향과 내 논리적 가정에 구멍이 있다면 직설적으로 비판하면서 명확한 액션 플랜을 제시해."
                         
