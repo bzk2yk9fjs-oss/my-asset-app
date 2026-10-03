@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.11: 매매 폼 초기값 0.00 세팅 및 불필요한 자산군(현금/배당) 삭제")
+st.write("V4.0: 실시간 환율(원화 자산) 방어 추적기 완전 가동")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -75,6 +75,16 @@ def add_trade(date_str, ticker, trade_type, qty, price, group):
     except Exception as e:
         return False
 
+# 환율은 5분 주기로 캐싱하여 서버 과부하 방지 및 실시간성 확보
+@st.cache_data(ttl=300) 
+def get_exchange_rate():
+    try:
+        usdkrw = yf.Ticker("USDKRW=X")
+        current_rate = usdkrw.history(period="1d")['Close'].iloc[-1]
+        return float(current_rate)
+    except Exception:
+        return 1350.0 # 통신 에러 시 임시 기준 환율
+
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
     core_etf_tickers = [
@@ -133,11 +143,9 @@ with st.sidebar:
             
         t_type = st.selectbox("구분", ["매수", "매도"])
         
-        # 수량과 가격의 디폴트 값을 0.00으로 고정, 스텝 1.0 적용
         t_qty = st.number_input("체결 수량", value=0.00, min_value=0.00, format="%.2f", step=1.0)
         t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
         
-        # '현금/배당' 항목 삭제됨
         group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]
         t_group = st.selectbox("🧩 자산군 그룹 지정", group_list)
         
@@ -205,11 +213,14 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('하이브리드 엔진으로 정밀 데이터를 조립 중입니다... (공식 일봉 우선 검색 적용)'):
+        with st.spinner('실시간 시장 데이터 및 환율을 조립 중입니다...'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
             yesterday_recap = [] 
             sp500_change = 0.0
+            
+            # 실시간 환율 호출
+            current_krw_rate = get_exchange_rate()
             
             ny_tz = pytz.timezone('America/New_York')
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
@@ -247,7 +258,7 @@ else:
             
             if now_ny.weekday() >= 5: 
                 m_state = "⚫ 주말 (애프터 마켓 최종 마감 가격 유지)"
-                price_basis_label = "애프터 마켓 최종 마감 가격"
+                price_basis_label = "애프터 마켓 최종 마감가"
                 is_market_closed = True
             elif 4.0 <= t_val < 9.5:
                 m_state = "🟡 프리마켓 진행 중"
@@ -260,7 +271,7 @@ else:
                 price_basis_label = "실시간 애프터 마켓 가격"
             else:
                 m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
-                price_basis_label = "애프터 마켓 최종 마감 가격"
+                price_basis_label = "애프터 마켓 최종 마감가"
                 is_market_closed = True
                 
             market_time_info = f"🕒 **조회 시점:** {current_kr_time_str} (한국시간 기준)\n\n**현재 시장 상태:** {m_state}"
@@ -374,16 +385,27 @@ else:
                 row["비중"] = (row["평가액 ($)"] / total_value) * 100 if total_value > 0 else 0.0
 
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0.0
+            
+            # 실시간 원화 자산 환산
+            total_value_krw = total_value * current_krw_rate
 
             st.info(market_time_info)
-            col1, col2 = st.columns(2)
+            
+            # 메트릭스를 3열로 분할하여 배치
+            col1, col2, col3 = st.columns(3)
             
             col1.metric(
-                label=f"총 자산 평가액 (USD) - [{price_basis_label}]", 
+                label=f"총 평가액 (USD) - [{price_basis_label}]", 
                 value=f"${total_value:,.2f}", 
                 delta=f"{total_daily_change:,.2f} USD (오늘의 변동)"
             )
             col2.metric(
+                label="총 평가액 (KRW)", 
+                value=f"{int(total_value_krw):,} 원", 
+                delta=f"실시간 적용 환율: {current_krw_rate:,.2f} 원",
+                delta_color="off"
+            )
+            col3.metric(
                 label="총 누적 수익률", 
                 value=f"{total_all_time_return:+.2f}%", 
                 delta=f"{(total_value - total_invested):,.2f} USD (누적 총 손익)"
