@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V3.10: 사이드바 매매 입력 폼 UX 개선 (소수점 2자리 및 증감 단위 1로 고정)")
+st.write("V3.11: 매매 폼 초기값 0.00 세팅 및 불필요한 자산군(현금/배당) 삭제")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -133,11 +133,12 @@ with st.sidebar:
             
         t_type = st.selectbox("구분", ["매수", "매도"])
         
-        # 수량과 가격 모두 소수점 2자리 제한 및 스텝 1.0 적용
-        t_qty = st.number_input("체결 수량", min_value=0.01, format="%.2f", step=1.0)
-        t_price = st.number_input("체결 가격 ($)", min_value=0.01, format="%.2f", step=1.0)
+        # 수량과 가격의 디폴트 값을 0.00으로 고정, 스텝 1.0 적용
+        t_qty = st.number_input("체결 수량", value=0.00, min_value=0.00, format="%.2f", step=1.0)
+        t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
         
-        group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "현금/배당 (Cash&DRIP)", "기타 (Others)"]
+        # '현금/배당' 항목 삭제됨
+        group_list = ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]
         t_group = st.selectbox("🧩 자산군 그룹 지정", group_list)
         
         submit_btn = st.form_submit_button(label="장부에 즉시 기록")
