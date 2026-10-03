@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.0: 실시간 환율(원화 자산) 방어 추적기 완전 가동")
+st.write("V4.1: 미래에셋 기준 환전 수수료 적용 및 즉시 현금화(Cash-out) 금액 추적기")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -75,7 +75,7 @@ def add_trade(date_str, ticker, trade_type, qty, price, group):
     except Exception as e:
         return False
 
-# 환율은 5분 주기로 캐싱하여 서버 과부하 방지 및 실시간성 확보
+# 글로벌 기준환율 호출 (미래에셋 기준환율 프록시)
 @st.cache_data(ttl=300) 
 def get_exchange_rate():
     try:
@@ -83,7 +83,7 @@ def get_exchange_rate():
         current_rate = usdkrw.history(period="1d")['Close'].iloc[-1]
         return float(current_rate)
     except Exception:
-        return 1350.0 # 통신 에러 시 임시 기준 환율
+        return 1350.0
 
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
@@ -213,14 +213,18 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('실시간 시장 데이터 및 환율을 조립 중입니다...'):
+        with st.spinner('실시간 시장 데이터 및 환전 수수료 산출 중...'):
             total_value, total_invested, total_daily_change = 0.0, 0.0, 0.0
             results = []
             yesterday_recap = [] 
             sp500_change = 0.0
             
-            # 실시간 환율 호출
-            current_krw_rate = get_exchange_rate()
+            # 실시간 기준환율 호출
+            current_base_rate = get_exchange_rate()
+            
+            # 환전 수수료 계산 (미래에셋 기본 스프레드 1% + 환율우대 95% 가정 = 실제 수수료율 0.05%)
+            exchange_fee_rate = 0.01 * (1 - 0.95)
+            sell_rate = current_base_rate * (1 - exchange_fee_rate)
             
             ny_tz = pytz.timezone('America/New_York')
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
@@ -386,13 +390,15 @@ else:
 
             total_all_time_return = ((total_value - total_invested) / total_invested) * 100 if total_invested > 0 else 0.0
             
-            # 실시간 원화 자산 환산
-            total_value_krw = total_value * current_krw_rate
+            # 원화 자산 환산 (장부상 가치 vs 실제 현금화 가치)
+            total_value_krw_base = total_value * current_base_rate
+            total_value_krw_cashout = total_value * sell_rate
+            estimated_fee = total_value_krw_base - total_value_krw_cashout
 
             st.info(market_time_info)
             
-            # 메트릭스를 3열로 분할하여 배치
-            col1, col2, col3 = st.columns(3)
+            # 직관적인 4열 구조로 지표 재배치
+            col1, col2, col3, col4 = st.columns(4)
             
             col1.metric(
                 label=f"총 평가액 (USD) - [{price_basis_label}]", 
@@ -400,15 +406,21 @@ else:
                 delta=f"{total_daily_change:,.2f} USD (오늘의 변동)"
             )
             col2.metric(
-                label="총 평가액 (KRW)", 
-                value=f"{int(total_value_krw):,} 원", 
-                delta=f"실시간 적용 환율: {current_krw_rate:,.2f} 원",
-                delta_color="off"
-            )
-            col3.metric(
                 label="총 누적 수익률", 
                 value=f"{total_all_time_return:+.2f}%", 
-                delta=f"{(total_value - total_invested):,.2f} USD (누적 총 손익)"
+                delta=f"{(total_value - total_invested):,.2f} USD (총 손익)"
+            )
+            col3.metric(
+                label="장부상 평가액 (KRW)", 
+                value=f"{int(total_value_krw_base):,} 원", 
+                delta=f"기준환율: {current_base_rate:,.2f} 원",
+                delta_color="off"
+            )
+            col4.metric(
+                label="💸 즉시 출금 예상액 (KRW)", 
+                value=f"{int(total_value_krw_cashout):,} 원", 
+                delta=f"예상 환전수수료: -{int(estimated_fee):,} 원",
+                delta_color="normal"
             )
             
             st.divider()
