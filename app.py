@@ -12,47 +12,44 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.7: 매크로 상황판 레이아웃 조정 (히트맵 1번, 핵심 지표 2번 배치)")
+st.write("V4.11: 차트 제거 및 초경량 실시간 매크로 숫자 뷰 적용 (한국형 Red/Blue 컬러 적용)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
 # ==========================================
 KOR_NAMES = {
-    # 내 포트폴리오 
     'VOO': '뱅가드 S&P 500', 'SGOV': '미국 0-3개월 초단기채', 'KO': '코카콜라', 
     'BAC': '뱅크오브아메리카', 'NEE': '넥스트에라 에너지', 'LMT': '록히드 마틴', 
     'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': '스페이스X', 
     'RGTI': '리게티 컴퓨팅', 'ARQQ': '아킷 퀀텀',
-    # 빅테크 & 우량주
     'AAPL': '애플', 'MSFT': '마이크로소프트', 'AMZN': '아마존닷컴', 'NVDA': '엔비디아', 
     'TSLA': '테슬라', 'META': '메타 플랫폼스', 'BRK.B': '버크셔 해서웨이', 'AVGO': '브로드컴', 
     'TSM': 'TSMC', 'LLY': '일라이 릴리', 'JPM': 'JP모건 체이스', 'V': '비자', 
     'XOM': '엑슨모빌', 'UNH': '유나이티드헬스', 'PG': '프록터 앤 갬블 (P&G)', 
     'MA': '마스터카드', 'JNJ': '존슨앤존슨', 'HD': '홈디포', 'MRK': '머크', 'CVX': '쉐브론',
-    # 주요 ETF & 지수 레버리지
     'SPY': 'SPDR S&P 500', 'QQQ': '인베스코 QQQ', 'DIA': 'SPDR 다우존스',
     'SCHD': '슈왑 배당 ETF (SCHD)', 'JEPI': 'JP모건 커버드콜 (JEPI)', 'TLT': '미국 20년 이상 장기채',
     'TQQQ': '프로셰어즈 TQQQ (나스닥 3X)', 'SQQQ': '프로셰어즈 SQQQ (인버스 3X)', 
     'SOXL': '디렉시온 SOXL (반도체 3X)', 'SOXS': '디렉시온 SOXS (인버스 3X)',
     'SSO': '프로셰어즈 SSO (S&P 500 2X)', 'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
     'QLD': '프로셰어즈 QLD (나스닥 2X)', 'SOXX': 'iShares 반도체 ETF', 'USD': '프로셰어즈 반도체 2X',
-    # 개별주 레버리지 (Single-Stock ETFs)
     'SNXX': '트레이더 샌디스크 2X', 'NVDL': '그래니트셰어즈 엔비디아 2X', 
     'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X'
 }
 
 # ==========================================
-# 1. 백엔드 데이터베이스 연결 및 제어 로직
+# 1. 백엔드 데이터베이스 & 혁신적 데이터 파이프라인
 # ==========================================
-def get_color_text(val, is_percent=True):
+# 한국형 상승(빨강)/하락(파랑) 컬러 텍스트 변환기
+def get_color_text(val, is_percent=True, prefix="", suffix=""):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
     if is_percent: res = f"{sign}{fmt}%"
-    else: res = f"{sign}${abs(val):.2f}"
+    else: res = f"{sign}{prefix}{abs(val):.2f}{suffix}"
     
-    if val > 0: return f":green[{res}]"
-    elif val < 0: return f":red[{res}]"
+    if val > 0: return f":red[{res}]"
+    elif val < 0: return f":blue[{res}]"
     else: return f":gray[{res}]"
 
 @st.cache_data(ttl=60)
@@ -62,7 +59,7 @@ def load_data():
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
         return pd.DataFrame(sheet.get_all_records())
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
@@ -72,17 +69,31 @@ def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
         sheet = gc.open("내 주식 장부").sheet1
         sheet.append_row([str(date_str), str(ticker).upper(), str(trade_type), float(qty), float(price), float(fx), str(group)])
         return True
-    except Exception as e:
+    except Exception:
         return False
 
-@st.cache_data(ttl=300) 
-def get_exchange_rate():
-    try:
-        usdkrw = yf.Ticker("USDKRW=X")
-        current_rate = usdkrw.history(period="1d")['Close'].iloc[-1]
-        return float(current_rate)
-    except Exception:
-        return 1350.0
+# 초경량 실시간 매크로 데이터 수집기 (현재가 & 전일종가 동시 확보)
+@st.cache_data(ttl=60)
+def get_macro_data():
+    macros = {}
+    symbols = {"USDKRW": "USDKRW=X", "TNX": "^TNX", "WTI": "CL=F"}
+    for key, sym in symbols.items():
+        try:
+            tk = yf.Ticker(sym)
+            live = float(tk.fast_info.last_price)
+            prev = float(tk.fast_info.previous_close)
+            
+            # 국채 10년물 소수점 10배수 보정
+            if key == "TNX" and live > 10:
+                live /= 10
+                prev /= 10
+                
+            change = live - prev
+            pct = (change / prev) * 100 if prev > 0 else 0.0
+            macros[key] = {"live": live, "change": change, "pct": pct}
+        except Exception:
+            macros[key] = {"live": 0.0, "change": 0.0, "pct": 0.0}
+    return macros
 
 @st.cache_data(ttl=86400)
 def get_all_us_tickers():
@@ -122,7 +133,8 @@ def get_all_us_tickers():
 # 2. 사이드바: 매매 컨트롤러 (Input Form)
 # ==========================================
 all_us_tickers = get_all_us_tickers()
-current_live_fx = get_exchange_rate()
+macro_cache = get_macro_data()
+current_live_fx = macro_cache['USDKRW']['live'] if macro_cache['USDKRW']['live'] > 0 else 1350.0
 
 with st.sidebar:
     st.header("⚡ 스마트 트레이딩 룸")
@@ -225,7 +237,7 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('실시간 데이터 연동 및 환차손익 산출 중...'):
+        with st.spinner('실시간 60초 엔진 가동 중...'):
             total_value_usd, total_invested_usd = 0.0, 0.0
             total_daily_change_usd = 0.0
             total_fx_gain_loss_krw = 0.0
@@ -233,8 +245,6 @@ else:
             results = []
             yesterday_recap = [] 
             sp500_change = 0.0
-            
-            current_base_rate = current_live_fx
             
             ny_tz = pytz.timezone('America/New_York')
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
@@ -293,7 +303,7 @@ else:
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
                 avg_usd_price = float(info['총투자금USD']) / shares if shares > 0 else 0
-                avg_purchase_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_base_rate
+                avg_purchase_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_live_fx
                 category = get_category(ticker)
                 kor_name = KOR_NAMES.get(ticker, ticker)
                 
@@ -351,7 +361,7 @@ else:
                 return_percent = ((c_price - avg_usd_price) / avg_usd_price) * 100 if avg_usd_price > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                stock_fx_gain_loss = info['총투자금USD'] * (current_base_rate - avg_purchase_fx)
+                stock_fx_gain_loss = info['총투자금USD'] * (current_live_fx - avg_purchase_fx)
                 
                 total_value_usd += value_usd
                 total_daily_change_usd += change_dollar
@@ -399,7 +409,7 @@ else:
 
             total_all_time_return_usd = ((total_value_usd - total_invested_usd) / total_invested_usd) * 100 if total_invested_usd > 0 else 0.0
             
-            total_value_krw_base = total_value_usd * current_base_rate
+            total_value_krw_base = total_value_usd * current_live_fx
             total_invested_krw = sum(portfolio[tk]['총투자금KRW'] for tk in portfolio)
             total_profit_krw = total_value_krw_base - total_invested_krw
             total_return_pct_krw = (total_profit_krw / total_invested_krw) * 100 if total_invested_krw > 0 else 0.0
@@ -443,27 +453,25 @@ else:
                 st.subheader("💰 계좌 총괄 요약 (Total Summary)")
                 col1, col2, col3, col4 = st.columns(4)
                 
-                col1.metric(
-                    label=f"총 평가액 (USD) - [{price_basis_label}]", 
-                    value=f"${total_value_usd:,.2f}", 
-                    delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
-                )
-                col2.metric(
-                    label="총 누적 수익률 (USD 기준)", 
-                    value=f"{total_all_time_return_usd:+.2f}%", 
-                    delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
-                )
-                col3.metric(
-                    label="총 누적 수익률 (KRW 기준)", 
-                    value=f"{total_return_pct_krw:+.2f}%", 
-                    delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
-                )
-                col4.metric(
-                    label="총 평가액 (KRW)", 
-                    value=f"{int(total_value_krw_base):,} 원", 
-                    delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
-                    delta_color="normal"
-                )
+                with col1:
+                    st.markdown("**총 평가액 (USD)**")
+                    st.markdown(f"### ${total_value_usd:,.2f}")
+                    st.markdown(f"{get_color_text(total_daily_change_usd, False)} USD (오늘의 변동)")
+                
+                with col2:
+                    st.markdown("**총 누적 수익률 (USD 기준)**")
+                    st.markdown(f"### {total_all_time_return_usd:+.2f}%")
+                    st.markdown(f"{get_color_text(total_value_usd - total_invested_usd, False)} USD (순수 주식 손익)")
+                
+                with col3:
+                    st.markdown("**총 누적 수익률 (KRW 기준)**")
+                    st.markdown(f"### {total_return_pct_krw:+.2f}%")
+                    st.markdown(f"{get_color_text(total_profit_krw, False, suffix='원')} (주식+환차손익 종합)")
+                
+                with col4:
+                    st.markdown("**총 평가액 (KRW)**")
+                    st.markdown(f"### {int(total_value_krw_base):,} 원")
+                    st.markdown(f"현재까지 총 환차손익: {get_color_text(total_fx_gain_loss_krw, False, suffix='원')}")
                 
                 st.divider()
                 
@@ -516,7 +524,7 @@ else:
 
                 st.write("") 
 
-                st.subheader("⚡ 2. 실 실시간 흐름 파악 (당일 라이브)")
+                st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
                 
                 if is_market_closed:
                     st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
@@ -571,80 +579,31 @@ else:
         
         st.divider()
 
-        st.markdown("### 2. 핵심 매크로 지표 (환율 / 국채 10년물 / WTI 유가)")
+        st.markdown("### 2. 핵심 매크로 지표 (실시간 숫자 뷰)")
+        
+        # 초경량 실시간 캐시 데이터 호출
+        krw = macro_cache['USDKRW']
+        tnx = macro_cache['TNX']
+        wti = macro_cache['WTI']
+        
         mac1, mac2, mac3 = st.columns(3)
         with mac1:
-            components.html(
-                '''
-                <div class="tradingview-widget-container">
-                  <div class="tradingview-widget-container__widget"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
-                  {
-                  "symbol": "FX_IDC:USDKRW",
-                  "width": "100%",
-                  "height": "250",
-                  "locale": "kr",
-                  "dateRange": "1M",
-                  "colorTheme": "light",
-                  "trendLineColor": "rgba(41, 98, 255, 1)",
-                  "underLineColor": "rgba(41, 98, 255, 0.3)",
-                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
-                  "isTransparent": false,
-                  "autosize": false,
-                  "largeChartUrl": ""
-                }
-                  </script>
-                </div>
-                ''', height=250
-            )
+            with st.container(border=True):
+                st.markdown("**🇺🇸 USD/KRW 환율**")
+                st.markdown(f"### {krw['live']:,.2f} 원")
+                st.markdown(f"**전일 대비: {get_color_text(krw['change'], False, suffix='원')} ({get_color_text(krw['pct'], True)})**")
+
         with mac2:
-            components.html(
-                '''
-                <div class="tradingview-widget-container">
-                  <div class="tradingview-widget-container__widget"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
-                  {
-                  "symbol": "TVC:US10Y",
-                  "width": "100%",
-                  "height": "250",
-                  "locale": "kr",
-                  "dateRange": "1M",
-                  "colorTheme": "light",
-                  "trendLineColor": "rgba(41, 98, 255, 1)",
-                  "underLineColor": "rgba(41, 98, 255, 0.3)",
-                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
-                  "isTransparent": false,
-                  "autosize": false,
-                  "largeChartUrl": ""
-                }
-                  </script>
-                </div>
-                ''', height=250
-            )
+            with st.container(border=True):
+                st.markdown("**미국 10년물 국채 금리**")
+                st.markdown(f"### {tnx['live']:.3f} %")
+                st.markdown(f"**전일 대비: {get_color_text(tnx['change'], False, suffix='%p')} ({get_color_text(tnx['pct'], True)})**")
+
         with mac3:
-            components.html(
-                '''
-                <div class="tradingview-widget-container">
-                  <div class="tradingview-widget-container__widget"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
-                  {
-                  "symbol": "NYMEX:CL1!",
-                  "width": "100%",
-                  "height": "250",
-                  "locale": "kr",
-                  "dateRange": "1M",
-                  "colorTheme": "light",
-                  "trendLineColor": "rgba(41, 98, 255, 1)",
-                  "underLineColor": "rgba(41, 98, 255, 0.3)",
-                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
-                  "isTransparent": false,
-                  "autosize": false,
-                  "largeChartUrl": ""
-                }
-                  </script>
-                </div>
-                ''', height=250
-            )
+            with st.container(border=True):
+                st.markdown("**🛢️ WTI 원유 (선물)**")
+                st.markdown(f"### ${wti['live']:.2f}")
+                st.markdown(f"**전일 대비: {get_color_text(wti['change'], False, prefix='$')} ({get_color_text(wti['pct'], True)})**")
         
         st.divider()
         st.markdown("### 3. Fear and Greed Index (공포와 탐욕 지수)")
