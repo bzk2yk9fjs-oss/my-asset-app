@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.12: UI 롤백 및 컬러 엔진 분리 (포트폴리오: 초록/빨강, 매크로: 빨강/파랑)")
+st.write("V4.13: UI 레이아웃 정상화 (총괄 요약 패널 최상단 원복 및 순서 유지)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -84,7 +84,7 @@ def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
     except Exception:
         return False
 
-# 초경량 실시간 매크로 데이터 수집기 (현재가 & 전일종가 동시 확보)
+# 초경량 실시간 매크로 데이터 수집기
 @st.cache_data(ttl=60)
 def get_macro_data():
     macros = {}
@@ -95,7 +95,6 @@ def get_macro_data():
             live = float(tk.fast_info.last_price)
             prev = float(tk.fast_info.previous_close)
             
-            # 국채 10년물 소수점 10배수 보정
             if key == "TNX" and live > 10:
                 live /= 10
                 prev /= 10
@@ -426,8 +425,40 @@ else:
             total_profit_krw = total_value_krw_base - total_invested_krw
             total_return_pct_krw = (total_profit_krw / total_invested_krw) * 100 if total_invested_krw > 0 else 0.0
 
+            # ----------------------------------------------------
+            # 수정 완료: 메트릭스 뷰 화면 최상단 복구 및 순서 유지
+            # [1: 총 평가액(USD)] [2: 수익률(USD)] [3: 수익률(KRW)] [4: 총 평가액(KRW)]
+            # ----------------------------------------------------
             st.info(market_time_info)
             
+            st.subheader("💰 계좌 총괄 요약 (Total Summary)")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            col1.metric(
+                label=f"총 평가액 (USD) - [{price_basis_label}]", 
+                value=f"${total_value_usd:,.2f}", 
+                delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
+            )
+            col2.metric(
+                label="총 누적 수익률 (USD 기준)", 
+                value=f"{total_all_time_return_usd:+.2f}%", 
+                delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
+            )
+            col3.metric(
+                label="총 누적 수익률 (KRW 기준)", 
+                value=f"{total_return_pct_krw:+.2f}%", 
+                delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
+            )
+            col4.metric(
+                label="총 평가액 (KRW)", 
+                value=f"{int(total_value_krw_base):,} 원", 
+                delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
+                delta_color="normal"
+            )
+            
+            st.divider()
+            
+            # 포트폴리오 상세 표 영역
             if results:
                 df = pd.DataFrame(results)
                 df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
@@ -458,34 +489,6 @@ else:
                         "평가액 ($)": st.column_config.NumberColumn("평가액($)", format="$%.2f"),
                         "비중": st.column_config.ProgressColumn("비중(%)", format="%.2f%%", min_value=0, max_value=100)
                     }
-                )
-                
-                st.divider()
-                
-                # V4.10 오리지널 st.metric UI로 롤백
-                st.subheader("💰 계좌 총괄 요약 (Total Summary)")
-                col1, col2, col3, col4 = st.columns(4)
-                
-                col1.metric(
-                    label=f"총 평가액 (USD) - [{price_basis_label}]", 
-                    value=f"${total_value_usd:,.2f}", 
-                    delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
-                )
-                col2.metric(
-                    label="총 누적 수익률 (USD 기준)", 
-                    value=f"{total_all_time_return_usd:+.2f}%", 
-                    delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
-                )
-                col3.metric(
-                    label="총 누적 수익률 (KRW 기준)", 
-                    value=f"{total_return_pct_krw:+.2f}%", 
-                    delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
-                )
-                col4.metric(
-                    label="총 평가액 (KRW)", 
-                    value=f"{int(total_value_krw_base):,} 원", 
-                    delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
-                    delta_color="normal"
                 )
                 
                 st.divider()
@@ -559,7 +562,7 @@ else:
                         st.code(ai_prompt, language="markdown")
                         st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
                     else:
-                        st.success("✔️ **[현재 라이브 기준]** 기준치(±3%)를 초과하는 실시간 특징 동향 종목이 없습니다. 보여줄 데이터가 없으므로 브리핑을 생략합니다.")
+                        st.success("✔️️ **[현재 라이브 기준]** 기준치(±3%)를 초과하는 실시간 특징 동향 종목이 없습니다. 보여줄 데이터가 없으므로 브리핑을 생략합니다.")
                 else:
                     st.info("💡 당일 실시간 거래 데이터를 분석할 수 없습니다.")
 
