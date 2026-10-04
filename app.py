@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.13: UI 레이아웃 정상화 (총괄 요약 패널 최상단 원복 및 순서 유지)")
+st.write("V4.14: 엔진 오버클럭 적용 (실시간 데이터 캐싱 주기 60초 -> 30초 단축)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -64,7 +64,8 @@ def get_macro_color_text(val, is_percent=True, prefix="", suffix=""):
     elif val < 0: return f":blue[{res}]"
     else: return f":gray[{res}]"
 
-@st.cache_data(ttl=60)
+# 구글 시트 연동 (30초 주기 단축)
+@st.cache_data(ttl=30)
 def load_data():
     try:
         creds_dict = json.loads(st.secrets["google_credentials"])
@@ -84,8 +85,8 @@ def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
     except Exception:
         return False
 
-# 초경량 실시간 매크로 데이터 수집기
-@st.cache_data(ttl=60)
+# 초경량 실시간 매크로 데이터 수집기 (30초 주기 단축)
+@st.cache_data(ttl=30)
 def get_macro_data():
     macros = {}
     symbols = {"USDKRW": "USDKRW=X", "TNX": "^TNX", "WTI": "CL=F"}
@@ -248,7 +249,7 @@ else:
         portfolio = {k: v for k, v in portfolio.items() if v['수량'] > 0}
         tickers = list(portfolio.keys())
         
-        with st.spinner('실시간 60초 엔진 가동 중...'):
+        with st.spinner('실시간 30초 엔진 가동 중...'):
             total_value_usd, total_invested_usd = 0.0, 0.0
             total_daily_change_usd = 0.0
             total_fx_gain_loss_krw = 0.0
@@ -425,10 +426,6 @@ else:
             total_profit_krw = total_value_krw_base - total_invested_krw
             total_return_pct_krw = (total_profit_krw / total_invested_krw) * 100 if total_invested_krw > 0 else 0.0
 
-            # ----------------------------------------------------
-            # 수정 완료: 메트릭스 뷰 화면 최상단 복구 및 순서 유지
-            # [1: 총 평가액(USD)] [2: 수익률(USD)] [3: 수익률(KRW)] [4: 총 평가액(KRW)]
-            # ----------------------------------------------------
             st.info(market_time_info)
             
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
@@ -458,7 +455,6 @@ else:
             
             st.divider()
             
-            # 포트폴리오 상세 표 영역
             if results:
                 df = pd.DataFrame(results)
                 df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
@@ -562,7 +558,7 @@ else:
                         st.code(ai_prompt, language="markdown")
                         st.markdown(f"👉 **[🚀 실시간 뉴스 직접 체크하기 (SAVE 앱 연결)](https://saveticker.com)**")
                     else:
-                        st.success("✔️️ **[현재 라이브 기준]** 기준치(±3%)를 초과하는 실시간 특징 동향 종목이 없습니다. 보여줄 데이터가 없으므로 브리핑을 생략합니다.")
+                        st.success("✔️ **[현재 라이브 기준]** 기준치(±3%)를 초과하는 실시간 특징 동향 종목이 없습니다. 보여줄 데이터가 없으므로 브리핑을 생략합니다.")
                 else:
                     st.info("💡 당일 실시간 거래 데이터를 분석할 수 없습니다.")
 
@@ -599,7 +595,6 @@ else:
 
         st.markdown("### 2. 핵심 매크로 지표 (실시간 숫자 뷰)")
         
-        # 초경량 실시간 캐시 데이터 호출
         krw = macro_cache['USDKRW']
         tnx = macro_cache['TNX']
         wti = macro_cache['WTI']
