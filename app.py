@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.26: 세션별 변동률 분리 표기 (프리마켓/본장/애프터마켓 자동 전환)")
+st.write("V4.27: 서버 지연 대처 (타임아웃 연장 및 비상 오프라인 달력 탑재)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -22,18 +22,18 @@ if 'last_trade_hash' not in st.session_state:
     st.session_state['last_trade_hash'] = None
 
 # ==========================================
-# 네트워크 타임아웃 방어막
+# 네트워크 타임아웃 방어막 (5초 -> 10초 연장)
 # ==========================================
 class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
     def __init__(self, *args, **kwargs):
-        self.timeout = kwargs.pop('timeout', 5)
+        self.timeout = kwargs.pop('timeout', 10) # 무료 API 한계 고려 10초로 여유 확보
         super().__init__(*args, **kwargs)
     def send(self, request, **kwargs):
         kwargs['timeout'] = kwargs.get('timeout') or self.timeout
         return super().send(request, **kwargs)
 
 yf_session = requests.Session()
-adapter = TimeoutHTTPAdapter(timeout=5)
+adapter = TimeoutHTTPAdapter(timeout=10)
 yf_session.mount("https://", adapter)
 yf_session.mount("http://", adapter)
 
@@ -90,7 +90,7 @@ def load_data():
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
         return pd.DataFrame(sheet.get_all_records())
-    except Exception as e:
+    except Exception:
         raise Exception("Google API Error")
 
 def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
@@ -304,6 +304,7 @@ else:
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
             now_ny = datetime.datetime.now(ny_tz)
             
+            trading_dates = []
             if not sp_hist.empty:
                 trading_dates = sp_hist.index.date.tolist()
                 if now_ny.time() >= datetime.time(16, 0): completed_dates = [d for d in trading_dates if d <= now_ny.date()]
@@ -313,11 +314,20 @@ else:
                     target_date, prev_target_date = completed_dates[-1], completed_dates[-2]
                     last_closed_date_str = target_date.strftime('%m/%d')
                 else:
-                    st.error("🚨 **[API 응답 오류]** 달력 데이터를 수신하지 못했습니다.")
-                    st.stop()
-            else:
-                st.error("🚨 **[네트워크 타임아웃]** 야후 서버 통신에 실패했습니다.")
-                st.stop()
+                    # 데이터가 1개뿐이거나 부족할 경우 비상 달력 가동
+                    sp_hist = pd.DataFrame() 
+            
+            # [수술 완료] 달력 데이터를 아예 못 가져오더라도 앱을 죽이지 않고 오프라인으로 렌더링
+            if sp_hist.empty:
+                st.warning("⚠️ **[야후 서버 지연]** 벤치마크 달력 응답이 지연되어 오프라인 비상 달력으로 대체 렌더링합니다.")
+                target_date = now_ny.date()
+                if now_ny.time() < datetime.time(16, 0): target_date -= datetime.timedelta(days=1)
+                while target_date.weekday() >= 5: target_date -= datetime.timedelta(days=1)
+                
+                prev_target_date = target_date - datetime.timedelta(days=1)
+                while prev_target_date.weekday() >= 5: prev_target_date -= datetime.timedelta(days=1)
+                
+                last_closed_date_str = target_date.strftime('%m/%d')
             
             t_val = now_ny.hour + now_ny.minute / 60.0
             is_weekend = now_ny.weekday() >= 5
@@ -329,12 +339,11 @@ else:
                 if 9.5 <= t_val < 16.0 and time_diff > 30.0:
                     is_early_closed = True
 
-            # [핵심 로직] 세션별 변동 라벨 쪼개기
             if is_weekend:
                 m_state, price_basis_label, is_market_closed = "⚫ 주말 (애프터 마감가)", "애프터 마켓 최종가", True
                 change_label, short_label = "오늘의 변동-애프터 마켓", "애프터 마켓"
             else:
-                if t_val >= 10.0 and not is_today_in_data:
+                if t_val >= 10.0 and not is_today_in_data and not sp_hist.empty:
                     m_state, price_basis_label, is_market_closed = "⚫ 미국증시 휴장일 (공휴일)", "전일 마감가", True
                     change_label, short_label = "오늘의 변동-휴장", "휴장"
                 elif is_early_closed:
@@ -357,6 +366,7 @@ else:
             market_time_info = f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}"
 
             def get_sp_close(d_target):
+                if sp_hist.empty: return 0.0
                 match = sp_hist[sp_hist.index.date == d_target]
                 return float(match['Close'].iloc[-1]) if not match.empty else 0.0
             
@@ -434,7 +444,6 @@ else:
             
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
             col1, col2, col3, col4 = st.columns(4)
-            # [수정] 메트릭의 delta 라벨에 동적 세션 라벨 적용
             col1.metric(label=f"총 평가액 (USD) - [{price_basis_label}]", value=f"${total_value_usd:,.2f}", delta=f"{total_daily_change_usd:,.2f} USD ({change_label})")
             col2.metric(label="총 누적 수익률 (USD)", value=f"{total_all_time_usd:+.2f}%", delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)")
             col3.metric(label="총 누적 수익률 (KRW)", value=f"{total_return_krw:+.2f}%", delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)")
@@ -448,7 +457,6 @@ else:
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
-                # [수정] 데이터프레임 컬럼 이름에 동적 세션 라벨 적용
                 st.dataframe(df, use_container_width=True, hide_index=True,
                              column_config={"티커": "티커", "종목명": "종목명", "그룹": "자산군", 
                                             "보유 수량": st.column_config.NumberColumn("수량", format="%.4f"),
