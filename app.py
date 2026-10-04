@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.27: 봇 탐지 우회(User-Agent) 적용 및 통신 장애 전면 해결")
+st.write("V4.28: 파이차트 그룹명 강제 통합(Normalization) 및 CME 지표 링크 복구")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -33,7 +33,6 @@ class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
         return super().send(request, **kwargs)
 
 yf_session = requests.Session()
-# [핵심 해결책] 야후 서버의 403 Forbidden 봇 차단을 뚫기 위한 크롬 브라우저 위조
 yf_session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 })
@@ -206,6 +205,18 @@ def get_all_us_tickers():
         return ["직접 입력 (티커 수동 입력)"] + sorted(list(set(core_etfs + [f"{tk} | {KOR_NAMES.get(tk, tk)}" for tk in fallback_tk_list])))
 
 # ==========================================
+# [신규] 카테고리 정제 필터 (파이차트 분열 현상 해결)
+# ==========================================
+def normalize_category(cat):
+    cat_str = str(cat).strip()
+    if '코어' in cat_str: return '코어 (Core)'
+    if '방어' in cat_str: return '방어 (Defensive)'
+    if '우량' in cat_str: return '우량주 (Blue Chip)'
+    if '모험' in cat_str: return '모험주 (Adventure)'
+    if '모멘텀' in cat_str: return '모멘텀 (Momentum)'
+    return '기타 (Others)'
+
+# ==========================================
 # 2. 사이드바: 매매 컨트롤러
 # ==========================================
 all_us_tickers = get_all_us_tickers()
@@ -235,7 +246,7 @@ with st.sidebar:
                 current_trade_hash = f"{t_date}_{t_ticker}_{t_type}_{t_qty}_{t_price}"
                 
                 if current_trade_hash == st.session_state['last_trade_hash']:
-                    st.warning("⚠️️ 중복 클릭이 감지되었습니다. 이미 장부에 기록되었습니다.")
+                    st.warning("⚠️ 중복 클릭이 감지되었습니다. 이미 장부에 기록되었습니다.")
                 else:
                     with st.spinner("구글 시트 연동 중..."):
                         if add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_fx, t_group):
@@ -259,12 +270,19 @@ except Exception:
 if df_trades.empty:
     st.warning("장부 데이터가 비어있습니다. 사이드바에서 매매 기록을 추가해주세요.")
 else:
-    group_map = {'VOO': '코어', 'SGOV': '코어', 'KO': '방어', 'BAC': '방어', 'NEE': '방어', 'LMT': '방어', 'IBM': '우량주', 'SPCX': '우량주', 'GOOGL': '우량주', 'RGTI': '모험주', 'ARQQ': '모험주'}
+    group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)'}
+    
+    # 구글 시트에서 불러온 그룹명을 강제 정제(Normalize)하여 분열 방지
     if '그룹' in df_trades.columns:
         for _, row in df_trades.iterrows():
-            tk, grp = str(row.get('종목', '')).strip().upper(), str(row.get('그룹', '')).strip()
-            if tk and grp: group_map[tk] = grp
-    def get_category(ticker): return group_map.get(ticker.upper(), '기타 (Others)')
+            tk = str(row.get('종목', '')).strip().upper()
+            grp = str(row.get('그룹', '')).strip()
+            if tk and grp: 
+                group_map[tk] = normalize_category(grp)
+                
+    def get_category(ticker): 
+        cat = group_map.get(ticker.upper(), '기타 (Others)')
+        return normalize_category(cat)
 
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
@@ -530,5 +548,8 @@ else:
                 st.markdown(f"### ${wti['live']:.2f}")
                 st.markdown(f"**전일 대비: {get_macro_color_text(wti['change'], False, prefix='$')} ({get_macro_color_text(wti['pct'], True)})**")
         st.divider()
-        st.markdown("### 3. Fear and Greed Index (공포와 탐욕 지수)")
+        
+        # [복구 완료] CME FedWatch Tool 링크 부활
+        st.markdown("### 3. 시장 심리 및 금리 예측 지표")
         st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
+        st.markdown("👉 **[🔗 CME FedWatch Tool (금리 인상 확률) 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
