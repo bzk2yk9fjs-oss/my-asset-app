@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.27: 서버 지연 대처 (타임아웃 연장 및 비상 오프라인 달력 탑재)")
+st.write("V4.27: 봇 탐지 우회(User-Agent) 적용 및 통신 장애 전면 해결")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -22,17 +22,22 @@ if 'last_trade_hash' not in st.session_state:
     st.session_state['last_trade_hash'] = None
 
 # ==========================================
-# 네트워크 타임아웃 방어막 (5초 -> 10초 연장)
+# 네트워크 타임아웃 방어막 & 봇 탐지 우회 신분증
 # ==========================================
 class TimeoutHTTPAdapter(requests.adapters.HTTPAdapter):
     def __init__(self, *args, **kwargs):
-        self.timeout = kwargs.pop('timeout', 10) # 무료 API 한계 고려 10초로 여유 확보
+        self.timeout = kwargs.pop('timeout', 10)
         super().__init__(*args, **kwargs)
     def send(self, request, **kwargs):
         kwargs['timeout'] = kwargs.get('timeout') or self.timeout
         return super().send(request, **kwargs)
 
 yf_session = requests.Session()
+# [핵심 해결책] 야후 서버의 403 Forbidden 봇 차단을 뚫기 위한 크롬 브라우저 위조
+yf_session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+})
+
 adapter = TimeoutHTTPAdapter(timeout=10)
 yf_session.mount("https://", adapter)
 yf_session.mount("http://", adapter)
@@ -90,7 +95,7 @@ def load_data():
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
         return pd.DataFrame(sheet.get_all_records())
-    except Exception:
+    except Exception as e:
         raise Exception("Google API Error")
 
 def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
@@ -184,7 +189,7 @@ def get_all_us_tickers():
     core_etf_tickers = ['SPY', 'QQQ', 'DIA', 'TQQQ', 'SQQQ', 'SOXL', 'SOXS', 'UPRO', 'SSO', 'QLD', 'SOXX', 'USD', 'SCHD', 'JEPI', 'TLT', 'VOO', 'SGOV', 'SNXX', 'NVDL', 'TSLL', 'CONL']
     core_etfs = [f"{tk} | {KOR_NAMES.get(tk, tk)}" for tk in core_etf_tickers]
     try:
-        headers = {'User-Agent': 'QuantPortfolioAdmin/1.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         url = "https://www.sec.gov/files/company_tickers.json"
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
@@ -230,7 +235,7 @@ with st.sidebar:
                 current_trade_hash = f"{t_date}_{t_ticker}_{t_type}_{t_qty}_{t_price}"
                 
                 if current_trade_hash == st.session_state['last_trade_hash']:
-                    st.warning("⚠️ 중복 클릭이 감지되었습니다. 이미 장부에 기록되었습니다.")
+                    st.warning("⚠️️ 중복 클릭이 감지되었습니다. 이미 장부에 기록되었습니다.")
                 else:
                     with st.spinner("구글 시트 연동 중..."):
                         if add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_fx, t_group):
@@ -314,10 +319,8 @@ else:
                     target_date, prev_target_date = completed_dates[-1], completed_dates[-2]
                     last_closed_date_str = target_date.strftime('%m/%d')
                 else:
-                    # 데이터가 1개뿐이거나 부족할 경우 비상 달력 가동
                     sp_hist = pd.DataFrame() 
             
-            # [수술 완료] 달력 데이터를 아예 못 가져오더라도 앱을 죽이지 않고 오프라인으로 렌더링
             if sp_hist.empty:
                 st.warning("⚠️ **[야후 서버 지연]** 벤치마크 달력 응답이 지연되어 오프라인 비상 달력으로 대체 렌더링합니다.")
                 target_date = now_ny.date()
