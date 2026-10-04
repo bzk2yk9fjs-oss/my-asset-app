@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.11: 차트 제거 및 초경량 실시간 매크로 숫자 뷰 적용 (한국형 Red/Blue 컬러 적용)")
+st.write("V4.12: UI 롤백 및 컬러 엔진 분리 (포트폴리오: 초록/빨강, 매크로: 빨강/파랑)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -40,8 +40,20 @@ KOR_NAMES = {
 # ==========================================
 # 1. 백엔드 데이터베이스 & 혁신적 데이터 파이프라인
 # ==========================================
-# 한국형 상승(빨강)/하락(파랑) 컬러 텍스트 변환기
-def get_color_text(val, is_percent=True, prefix="", suffix=""):
+# 기존 오리지널 컬러 변환기 (포트폴리오용: 상승 초록, 하락 빨강)
+def get_color_text(val, is_percent=True):
+    if pd.isna(val) or val is None: return ":gray[데이터 없음]"
+    sign = "+" if val > 0 else ""
+    fmt = f"{val:.2f}"
+    if is_percent: res = f"{sign}{fmt}%"
+    else: res = f"{sign}${abs(val):.2f}"
+    
+    if val > 0: return f":green[{res}]"
+    elif val < 0: return f":red[{res}]"
+    else: return f":gray[{res}]"
+
+# 매크로 지표 전용 컬러 변환기 (한국형: 상승 빨강, 하락 파랑)
+def get_macro_color_text(val, is_percent=True, prefix="", suffix=""):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
@@ -450,28 +462,31 @@ else:
                 
                 st.divider()
                 
+                # V4.10 오리지널 st.metric UI로 롤백
                 st.subheader("💰 계좌 총괄 요약 (Total Summary)")
                 col1, col2, col3, col4 = st.columns(4)
                 
-                with col1:
-                    st.markdown("**총 평가액 (USD)**")
-                    st.markdown(f"### ${total_value_usd:,.2f}")
-                    st.markdown(f"{get_color_text(total_daily_change_usd, False)} USD (오늘의 변동)")
-                
-                with col2:
-                    st.markdown("**총 누적 수익률 (USD 기준)**")
-                    st.markdown(f"### {total_all_time_return_usd:+.2f}%")
-                    st.markdown(f"{get_color_text(total_value_usd - total_invested_usd, False)} USD (순수 주식 손익)")
-                
-                with col3:
-                    st.markdown("**총 누적 수익률 (KRW 기준)**")
-                    st.markdown(f"### {total_return_pct_krw:+.2f}%")
-                    st.markdown(f"{get_color_text(total_profit_krw, False, suffix='원')} (주식+환차손익 종합)")
-                
-                with col4:
-                    st.markdown("**총 평가액 (KRW)**")
-                    st.markdown(f"### {int(total_value_krw_base):,} 원")
-                    st.markdown(f"현재까지 총 환차손익: {get_color_text(total_fx_gain_loss_krw, False, suffix='원')}")
+                col1.metric(
+                    label=f"총 평가액 (USD) - [{price_basis_label}]", 
+                    value=f"${total_value_usd:,.2f}", 
+                    delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
+                )
+                col2.metric(
+                    label="총 누적 수익률 (USD 기준)", 
+                    value=f"{total_all_time_return_usd:+.2f}%", 
+                    delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
+                )
+                col3.metric(
+                    label="총 누적 수익률 (KRW 기준)", 
+                    value=f"{total_return_pct_krw:+.2f}%", 
+                    delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
+                )
+                col4.metric(
+                    label="총 평가액 (KRW)", 
+                    value=f"{int(total_value_krw_base):,} 원", 
+                    delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
+                    delta_color="normal"
+                )
                 
                 st.divider()
                 
@@ -591,19 +606,19 @@ else:
             with st.container(border=True):
                 st.markdown("**🇺🇸 USD/KRW 환율**")
                 st.markdown(f"### {krw['live']:,.2f} 원")
-                st.markdown(f"**전일 대비: {get_color_text(krw['change'], False, suffix='원')} ({get_color_text(krw['pct'], True)})**")
+                st.markdown(f"**전일 대비: {get_macro_color_text(krw['change'], False, suffix='원')} ({get_macro_color_text(krw['pct'], True)})**")
 
         with mac2:
             with st.container(border=True):
                 st.markdown("**미국 10년물 국채 금리**")
                 st.markdown(f"### {tnx['live']:.3f} %")
-                st.markdown(f"**전일 대비: {get_color_text(tnx['change'], False, suffix='%p')} ({get_color_text(tnx['pct'], True)})**")
+                st.markdown(f"**전일 대비: {get_macro_color_text(tnx['change'], False, suffix='%p')} ({get_macro_color_text(tnx['pct'], True)})**")
 
         with mac3:
             with st.container(border=True):
                 st.markdown("**🛢️ WTI 원유 (선물)**")
                 st.markdown(f"### ${wti['live']:.2f}")
-                st.markdown(f"**전일 대비: {get_color_text(wti['change'], False, prefix='$')} ({get_color_text(wti['pct'], True)})**")
+                st.markdown(f"**전일 대비: {get_macro_color_text(wti['change'], False, prefix='$')} ({get_macro_color_text(wti['pct'], True)})**")
         
         st.divider()
         st.markdown("### 3. Fear and Greed Index (공포와 탐욕 지수)")
