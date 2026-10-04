@@ -12,7 +12,7 @@ import requests
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.5: 상단 메트릭 패널 순서 변경 (수익률 KRW -> 총 평가액 KRW)")
+st.write("V4.7: 매크로 상황판 레이아웃 조정 (히트맵 1번, 핵심 지표 2번 배치)")
 
 # ==========================================
 # 0. 스마트 한글 사전 (Portfolio & Major US Stocks)
@@ -406,33 +406,6 @@ else:
 
             st.info(market_time_info)
             
-            # 네가 요청한 순서대로 재배치 (USD 총액 -> USD 수익률 -> KRW 수익률 -> KRW 총액)
-            col1, col2, col3, col4 = st.columns(4)
-            
-            col1.metric(
-                label=f"총 평가액 (USD) - [{price_basis_label}]", 
-                value=f"${total_value_usd:,.2f}", 
-                delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
-            )
-            col2.metric(
-                label="총 누적 수익률 (USD 기준)", 
-                value=f"{total_all_time_return_usd:+.2f}%", 
-                delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
-            )
-            col3.metric(
-                label="총 누적 수익률 (KRW 기준)", 
-                value=f"{total_return_pct_krw:+.2f}%", 
-                delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
-            )
-            col4.metric(
-                label="총 평가액 (KRW)", 
-                value=f"{int(total_value_krw_base):,} 원", 
-                delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
-                delta_color="normal"
-            )
-            
-            st.divider()
-            
             if results:
                 df = pd.DataFrame(results)
                 df = df.sort_values(by="비중", ascending=False).reset_index(drop=True)
@@ -463,6 +436,33 @@ else:
                         "평가액 ($)": st.column_config.NumberColumn("평가액($)", format="$%.2f"),
                         "비중": st.column_config.ProgressColumn("비중(%)", format="%.2f%%", min_value=0, max_value=100)
                     }
+                )
+                
+                st.divider()
+                
+                st.subheader("💰 계좌 총괄 요약 (Total Summary)")
+                col1, col2, col3, col4 = st.columns(4)
+                
+                col1.metric(
+                    label=f"총 평가액 (USD) - [{price_basis_label}]", 
+                    value=f"${total_value_usd:,.2f}", 
+                    delta=f"{total_daily_change_usd:,.2f} USD (오늘의 변동)"
+                )
+                col2.metric(
+                    label="총 누적 수익률 (USD 기준)", 
+                    value=f"{total_all_time_return_usd:+.2f}%", 
+                    delta=f"{(total_value_usd - total_invested_usd):,.2f} USD (순수 주식 손익)"
+                )
+                col3.metric(
+                    label="총 누적 수익률 (KRW 기준)", 
+                    value=f"{total_return_pct_krw:+.2f}%", 
+                    delta=f"{int(total_profit_krw):,} 원 (주식+환차손익 종합)"
+                )
+                col4.metric(
+                    label="총 평가액 (KRW)", 
+                    value=f"{int(total_value_krw_base):,} 원", 
+                    delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원",
+                    delta_color="normal"
                 )
                 
                 st.divider()
@@ -510,13 +510,13 @@ else:
                         with c_loser:
                             st.error(f"📉 **최대 구멍:** {top_loser['종목']} ({get_color_text(top_loser['어제변동률'])})")
                     else:
-                        st.info("비교할 수 있는 유효한 등락 데이터가 없습니다.")
+                        st.info("비교할 수 유효한 등락 데이터가 없습니다.")
                 else:
                     st.info("💡 전일 장마감 데이터가 존재하지 않거나 현재 수집 불가능한 상태입니다.")
 
                 st.write("") 
 
-                st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
+                st.subheader("⚡ 2. 실 실시간 흐름 파악 (당일 라이브)")
                 
                 if is_market_closed:
                     st.info("💡 **현재 프리마켓 개장 전(또는 주말 장 마감)이므로 실시간 흐름 파악 데이터가 없습니다.**\n\n(미국 증시 개장 시간에 다시 확인해 주세요.)")
@@ -542,6 +542,7 @@ else:
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
+        
         st.markdown("### 1. S&P 500 섹터 히트맵 (TradingView)")
         components.html(
             '''
@@ -569,9 +570,86 @@ else:
         )
         
         st.divider()
-        st.markdown("### 2. Fear and Greed Index (공포와 탐욕 지수)")
+
+        st.markdown("### 2. 핵심 매크로 지표 (환율 / 국채 10년물 / WTI 유가)")
+        mac1, mac2, mac3 = st.columns(3)
+        with mac1:
+            components.html(
+                '''
+                <div class="tradingview-widget-container">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
+                  {
+                  "symbol": "FX_IDC:USDKRW",
+                  "width": "100%",
+                  "height": "250",
+                  "locale": "kr",
+                  "dateRange": "1M",
+                  "colorTheme": "light",
+                  "trendLineColor": "rgba(41, 98, 255, 1)",
+                  "underLineColor": "rgba(41, 98, 255, 0.3)",
+                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
+                  "isTransparent": false,
+                  "autosize": false,
+                  "largeChartUrl": ""
+                }
+                  </script>
+                </div>
+                ''', height=250
+            )
+        with mac2:
+            components.html(
+                '''
+                <div class="tradingview-widget-container">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
+                  {
+                  "symbol": "TVC:US10Y",
+                  "width": "100%",
+                  "height": "250",
+                  "locale": "kr",
+                  "dateRange": "1M",
+                  "colorTheme": "light",
+                  "trendLineColor": "rgba(41, 98, 255, 1)",
+                  "underLineColor": "rgba(41, 98, 255, 0.3)",
+                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
+                  "isTransparent": false,
+                  "autosize": false,
+                  "largeChartUrl": ""
+                }
+                  </script>
+                </div>
+                ''', height=250
+            )
+        with mac3:
+            components.html(
+                '''
+                <div class="tradingview-widget-container">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
+                  {
+                  "symbol": "NYMEX:CL1!",
+                  "width": "100%",
+                  "height": "250",
+                  "locale": "kr",
+                  "dateRange": "1M",
+                  "colorTheme": "light",
+                  "trendLineColor": "rgba(41, 98, 255, 1)",
+                  "underLineColor": "rgba(41, 98, 255, 0.3)",
+                  "underLineBottomColor": "rgba(41, 98, 255, 0)",
+                  "isTransparent": false,
+                  "autosize": false,
+                  "largeChartUrl": ""
+                }
+                  </script>
+                </div>
+                ''', height=250
+            )
+        
+        st.divider()
+        st.markdown("### 3. Fear and Greed Index (공포와 탐욕 지수)")
         st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
         
         st.divider()
-        st.markdown("### 3. CME FedWatch Tool (금리 예측)")
+        st.markdown("### 4. CME FedWatch Tool (금리 예측)")
         st.markdown("👉 **[🔗 CME FedWatch Tool 실시간 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
