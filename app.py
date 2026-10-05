@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.31: 글로벌 24시간 타임라인 교정 (한국시간 월요일 09시 데이마켓 오픈 동기화)")
+st.write("V4.32: 데이마켓(API 정지) / 프리마켓(실시간 연동) 타임라인 정밀 분리")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -352,9 +352,8 @@ else:
                 
                 last_closed_date_str = target_date.strftime('%m/%d')
             
-            # [해결 핵심] 요일 및 시간 추출
             t_val = now_ny.hour + now_ny.minute / 60.0
-            wd = now_ny.weekday() # 0:월, 4:금, 5:토, 6:일
+            wd = now_ny.weekday() 
             
             is_early_closed = False
             if last_trade_time:
@@ -362,21 +361,20 @@ else:
                 if 9.5 <= t_val < 16.0 and time_diff > 30.0:
                     is_early_closed = True
 
-            # [해결 핵심] '진짜 주말'의 완벽한 재정의 (금 20시 ~ 일 20시)
             is_weekend = False
-            if wd == 5: # 토요일 전체
+            if wd == 5: 
                 is_weekend = True
-            elif wd == 4 and t_val >= 20.0: # 금요일 20시 이후
+            elif wd == 4 and t_val >= 20.0: 
                 is_weekend = True
-            elif wd == 6 and t_val < 20.0: # 일요일 20시 이전
+            elif wd == 6 and t_val < 20.0: 
                 is_weekend = True
 
-            # 공휴일 체크 (평일 오전 10시 이후에만 확인)
             is_today_in_data = now_ny.date() in trading_dates
             is_holiday = False
             if 0 <= wd <= 4 and t_val >= 10.0 and not is_today_in_data and not sp_hist.empty:
                 is_holiday = True
 
+            # [해결 핵심] 데이마켓(가격정지)와 프리마켓(가격연동) 타임라인 완전 분리
             if is_weekend:
                 m_state, price_basis_label, is_market_closed = "⚫ 주말 (애프터 마감가)", "애프터 마켓 최종가", True
                 change_label, short_label = "오늘의 변동-주말", "주말"
@@ -388,9 +386,13 @@ else:
                     m_state, price_basis_label, is_market_closed = "⚠️ 조기 폐장 또는 통신 지연 감지", "조기 마감가 유지", True
                     change_label, short_label = "오늘의 변동-조기 폐장", "조기 폐장"
                 else:
-                    # 일요일 20시(월 09시 KST) ~ 다음날 09시 반 : 한국 데이마켓 및 프리마켓 통합
-                    if t_val >= 20.0 or t_val < 9.5: 
-                        m_state, price_basis_label, is_market_closed = "🟡 프리마켓(데이마켓) 진행 중", "실시간 프리마켓가", False
+                    # 뉴욕 시간 20:00(월 09:00 KST) ~ 04:00(월 17:00 KST): 야후 API 정지 시간대 (주간거래)
+                    if t_val >= 20.0 or t_val < 4.0: 
+                        m_state, price_basis_label, is_market_closed = "⚪ 데이마켓 (API 가격 멈춤)", "전일 애프터 최종가", False
+                        change_label, short_label = "오늘의 변동-데이마켓", "데이마켓"
+                    # 뉴욕 시간 04:00(월 17:00 KST) ~ 09:30(월 22:30 KST): 공식 프리마켓 (야후 API 실시간 연동)
+                    elif 4.0 <= t_val < 9.5: 
+                        m_state, price_basis_label, is_market_closed = "🟡 프리마켓 진행 (실시간 변동)", "실시간 프리마켓가", False
                         change_label, short_label = "오늘의 변동-프리마켓", "프리마켓"
                     elif 9.5 <= t_val < 16.0: 
                         m_state, price_basis_label, is_market_closed = "🟢 본장 진행 중", "실시간 본장가", False
