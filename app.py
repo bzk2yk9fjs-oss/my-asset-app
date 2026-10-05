@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.0: 배당금 트래킹 엔진 탑재 및 사이드바 듀얼 UI 적용 (Total Return 최적화)")
+st.write("V5.2: 배당금 자체 환차손익 실시간 추적 엔진 통합 (TR KRW 무결점 완성)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -231,7 +231,6 @@ current_live_fx = raw_live_fx if raw_live_fx > 0 else 1350.0
 with st.sidebar:
     st.header("⚡ 스마트 트레이딩 룸")
     
-    # [핵심] 사용성 극대화를 위한 라디오 버튼 메뉴 분리
     action_mode = st.radio("📝 작업 선택", ["📈 주식 매매 기록", "💰 배당금 수령 기록"], horizontal=True)
     
     if action_mode == "📈 주식 매매 기록":
@@ -273,7 +272,6 @@ with st.sidebar:
             
             if st.form_submit_button(label="배당금 장부에 추가"):
                 if d_ticker and d_amount > 0:
-                    # 백엔드 연동: 배당 기록은 수량을 0으로, 가격을 배당금액으로 매핑하여 저장
                     current_div_hash = f"{d_date}_{d_ticker}_배당_{d_amount}"
                     if current_div_hash == st.session_state['last_trade_hash']:
                         st.warning("⚠️ 중복 클릭이 감지되었습니다.")
@@ -328,7 +326,6 @@ else:
                 fx = float(raw_fx_val) if raw_fx_val else (current_live_fx if current_live_fx > 0 else 1350.0)
             except: continue
             
-            # [핵심] 포트폴리오 구조에 총배당USD/KRW 항목 추가
             if ticker not in portfolio: 
                 portfolio[ticker] = {'수량': 0.0, '총투자금USD': 0.0, '총투자금KRW': 0.0, '총배당USD': 0.0, '총배당KRW': 0.0}
             
@@ -342,7 +339,6 @@ else:
                 portfolio[ticker]['수량'] -= qty
                 portfolio[ticker]['총투자금USD'] -= (qty * avg_usd)
                 portfolio[ticker]['총투자금KRW'] -= (qty * avg_krw)
-            # 배당 파이프라인 합산
             elif trade_type == '배당':
                 portfolio[ticker]['총배당USD'] += price
                 portfolio[ticker]['총배당KRW'] += (price * fx)
@@ -406,7 +402,7 @@ else:
 
             if is_weekend:
                 m_state, price_basis_label, is_market_closed = "⚫ 주말 (애프터 마감가)", "애프터 마켓 최종가", True
-                change_label, short_label = "직전 애프터마켓 누적", "직전 애프터"
+                change_label, short_label = "직전 애프터 누적", "직전 애프터"
             else:
                 if is_holiday:
                     m_state, price_basis_label, is_market_closed = "⚫ 미국증시 휴장일 (공휴일)", "전일 마감가", True
@@ -417,7 +413,7 @@ else:
                 else:
                     if t_val >= 20.0 or t_val < 4.0: 
                         m_state, price_basis_label, is_market_closed = "⚪ 데이마켓 (API 가격 멈춤)", "전일 애프터 최종가", False
-                        change_label, short_label = "직전 애프터마켓 누적", "직전 애프터"
+                        change_label, short_label = "직전 애프터 누적", "직전 애프터"
                     elif 4.0 <= t_val < 9.5: 
                         m_state, price_basis_label, is_market_closed = "🟡 프리마켓 진행 (실시간 변동)", "실시간 프리마켓가", False
                         change_label, short_label = "오늘의 변동-프리마켓", "프리마켓"
@@ -472,21 +468,26 @@ else:
                 value_usd = c_price * shares
                 change_dollar = (c_price - t_close) * shares if t_close > 0 else 0.0
                 
-                # [핵심] 단순 주가 수익률 vs TR(총수익률) 분리 연산
                 return_percent = ((c_price - avg_usd) / avg_usd) * 100 if avg_usd > 0 else 0.0
                 div_usd = float(info['총배당USD'])
                 tr_percent = (((value_usd + div_usd) - float(info['총투자금USD'])) / float(info['총투자금USD'])) * 100 if float(info['총투자금USD']) > 0 else 0.0
-                
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                if current_live_fx > 0 and shares > 0:
-                    stock_fx_gain = info['총투자금USD'] * (current_live_fx - avg_fx)
-                else: stock_fx_gain = 0.0
+                # [핵심] 주식 원금 환차익 + 배당금 자체 환차익 완벽 분리 및 합산
+                stock_fx_gain = 0.0
+                div_fx_gain = 0.0
+                if current_live_fx > 0:
+                    if shares > 0 and info['총투자금USD'] > 0:
+                        stock_fx_gain = info['총투자금USD'] * (current_live_fx - avg_fx)
+                    if div_usd > 0:
+                        div_fx_gain = (div_usd * current_live_fx) - float(info['총배당KRW'])
+                
+                total_item_fx_gain = stock_fx_gain + div_fx_gain
                 
                 total_value_usd += value_usd
                 total_daily_change_usd += change_dollar
                 total_invested_usd += float(info['총투자금USD'])
-                total_fx_gain_loss_krw += stock_fx_gain
+                total_fx_gain_loss_krw += total_item_fx_gain
                 
                 if shares > 0 or div_usd > 0:
                     results.append({
@@ -494,7 +495,7 @@ else:
                         "평단가 ($)": round(avg_usd, 2), "현재가 ($)": round(c_price, 2),
                         "매입환율": round(avg_fx, 2), "누적배당($)": round(div_usd, 2),
                         "주가수익(%)": round(return_percent, 2), "총수익률(TR%)": round(tr_percent, 2),
-                        "당일 변동 (%)": round(daily_percent, 2), "환차손익(KRW)": int(stock_fx_gain),
+                        "당일 변동 (%)": round(daily_percent, 2), "환차손익(KRW)": int(total_item_fx_gain),
                         "평가액 ($)": round(value_usd, 2)
                     })
 
@@ -503,10 +504,12 @@ else:
             total_profit_usd_only = total_value_usd - total_invested_usd
             total_all_time_usd_tr = ((total_value_usd + total_dividend_usd_all - total_invested_usd) / total_invested_usd) * 100 if total_invested_usd > 0 else 0.0
             
+            # [핵심] 원화 총수익률 연산에 실시간 환율이 적용된 배당금 가치 정확히 산입
             total_value_krw = total_value_usd * current_live_fx if current_live_fx > 0 else 0.0
             total_invested_krw = sum(portfolio[tk]['총투자금KRW'] for tk in portfolio)
             
-            total_profit_krw_tr = (total_value_krw + total_dividend_krw_all) - total_invested_krw if current_live_fx > 0 else 0.0
+            total_dividend_current_krw = total_dividend_usd_all * current_live_fx if current_live_fx > 0 else 0.0
+            total_profit_krw_tr = (total_value_krw + total_dividend_current_krw) - total_invested_krw if current_live_fx > 0 else 0.0
             total_return_krw_tr = (total_profit_krw_tr / total_invested_krw) * 100 if (total_invested_krw > 0 and current_live_fx > 0) else 0.0
 
             st.info(market_time_info)
@@ -514,11 +517,12 @@ else:
             if error_tickers: st.error(f"🚨 **[데이터 수신 오류]** 종목 데이터 누락: **{', '.join(set(error_tickers))}**")
             
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric(label=f"총 주식 평가액 (USD) - [{price_basis_label}]", value=f"${total_value_usd:,.2f}", delta=f"{total_daily_change_usd:,.2f} USD ({change_label})")
-            col2.metric(label="누적 수령 배당금 (USD)", value=f"${total_dividend_usd_all:,.2f}", delta="현금흐름 파이프라인 확보", delta_color="normal")
-            col3.metric(label="총 누적 총수익률 (TR USD)", value=f"{total_all_time_usd_tr:+.2f}%", delta=f"{(total_profit_usd_only + total_dividend_usd_all):,.2f} USD (주식손익+배당합산)")
-            col4.metric(label="총 주식 평가액 (KRW)", value=f"{int(total_value_krw):,} 원", delta=f"현재까지 총 환차손익: {int(total_fx_gain_loss_krw):,} 원", delta_color="normal")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric(label=f"평가액(USD)-[{price_basis_label}]", value=f"${total_value_usd:,.2f}", delta=f"{total_daily_change_usd:,.2f} USD ({change_label})")
+            col2.metric(label="누적 배당금(USD)", value=f"${total_dividend_usd_all:,.2f}", delta="현금흐름 확보", delta_color="normal")
+            col3.metric(label="총수익률(TR USD)", value=f"{total_all_time_usd_tr:+.2f}%", delta=f"{(total_profit_usd_only + total_dividend_usd_all):,.2f} USD (손익+배당)")
+            col4.metric(label="총수익률(TR KRW)", value=f"{total_return_krw_tr:+.2f}%", delta=f"{int(total_profit_krw_tr):,} 원 (주식+배당+환차)")
+            col5.metric(label="평가액(KRW)", value=f"{int(total_value_krw):,} 원", delta=f"총 환차손익: {int(total_fx_gain_loss_krw):,} 원", delta_color="normal")
             st.divider()
             
             if results:
