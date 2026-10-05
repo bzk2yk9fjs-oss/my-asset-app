@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V4.28: 파이차트 그룹명 강제 통합(Normalization) 및 CME 지표 링크 복구")
+st.write("V4.30: 수익률 오차 완벽 교정 (V4.14 애프터마켓 실거래가 추출 로직 복원)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -167,10 +167,17 @@ def fetch_market_data(tickers_tuple):
         
     for tk in tickers_tuple:
         tk_obj = yf.Ticker(tk, session=yf_session)
+        
+        # [복구 핵심] V4.14 방식: 부정확한 전광판 대신, '애프터마켓 포함' 5분봉 차트에서 절대 최종가 추출
         try: 
-            live = float(tk_obj.fast_info.last_price)
+            intra = tk_obj.history(period="3d", interval="5m", prepost=True)
+            if not intra.empty and pd.notna(intra['Close'].iloc[-1]):
+                live = float(intra['Close'].iloc[-1])
+            else:
+                live = float(tk_obj.fast_info.last_price)
             if math.isnan(live): live = 0.0
-        except: live = 0.0
+        except: 
+            live = 0.0
         
         try: 
             hist = tk_obj.history(period="15d", interval="1d")
@@ -204,9 +211,6 @@ def get_all_us_tickers():
         fallback_tk_list = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOGL', 'KO', 'BAC', 'NEE', 'LMT', 'IBM', 'RGTI', 'ARQQ', 'SPCX']
         return ["직접 입력 (티커 수동 입력)"] + sorted(list(set(core_etfs + [f"{tk} | {KOR_NAMES.get(tk, tk)}" for tk in fallback_tk_list])))
 
-# ==========================================
-# [신규] 카테고리 정제 필터 (파이차트 분열 현상 해결)
-# ==========================================
 def normalize_category(cat):
     cat_str = str(cat).strip()
     if '코어' in cat_str: return '코어 (Core)'
@@ -272,7 +276,6 @@ if df_trades.empty:
 else:
     group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)'}
     
-    # 구글 시트에서 불러온 그룹명을 강제 정제(Normalize)하여 분열 방지
     if '그룹' in df_trades.columns:
         for _, row in df_trades.iterrows():
             tk = str(row.get('종목', '')).strip().upper()
@@ -518,7 +521,7 @@ else:
                         if abs(top_mover['당일 변동 (%)']) >= 3.0:
                             st.error(f"🚨 **[특징주 감지]** 현재 **{top_mover['종목명']}({top_mover['티커']})** 종목이 **{get_color_text(top_mover['당일 변동 (%)'])}** 급변동 중입니다.")
                             st.code(f"[{now_kr.strftime('%Y년 %m월 %d일 %H:%M')} 기준]\n내 포트폴리오의 [{top_mover['티커']}] 종목이 {top_mover['당일 변동 (%)']:+.2f}% 급변동 중. 외신 및 공시를 기반으로 원인과 대응책을 분석해라.", language="markdown")
-                        else: st.success("✔️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
+                        else: st.success("✔️️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
@@ -549,7 +552,6 @@ else:
                 st.markdown(f"**전일 대비: {get_macro_color_text(wti['change'], False, prefix='$')} ({get_macro_color_text(wti['pct'], True)})**")
         st.divider()
         
-        # [복구 완료] CME FedWatch Tool 링크 부활
         st.markdown("### 3. 시장 심리 및 금리 예측 지표")
         st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
         st.markdown("👉 **[🔗 CME FedWatch Tool (금리 인상 확률) 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
