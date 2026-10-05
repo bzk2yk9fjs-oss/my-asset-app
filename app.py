@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.2: 배당금 자체 환차손익 실시간 추적 엔진 통합 (TR KRW 무결점 완성)")
+st.write("V5.22: 배당 트래킹 통합 + 양극단 특징주(최고 효자/구멍) 및 프롬프트 완벽 복구")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -473,7 +473,6 @@ else:
                 tr_percent = (((value_usd + div_usd) - float(info['총투자금USD'])) / float(info['총투자금USD'])) * 100 if float(info['총투자금USD']) > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
-                # [핵심] 주식 원금 환차익 + 배당금 자체 환차익 완벽 분리 및 합산
                 stock_fx_gain = 0.0
                 div_fx_gain = 0.0
                 if current_live_fx > 0:
@@ -504,7 +503,6 @@ else:
             total_profit_usd_only = total_value_usd - total_invested_usd
             total_all_time_usd_tr = ((total_value_usd + total_dividend_usd_all - total_invested_usd) / total_invested_usd) * 100 if total_invested_usd > 0 else 0.0
             
-            # [핵심] 원화 총수익률 연산에 실시간 환율이 적용된 배당금 가치 정확히 산입
             total_value_krw = total_value_usd * current_live_fx if current_live_fx > 0 else 0.0
             total_invested_krw = sum(portfolio[tk]['총투자금KRW'] for tk in portfolio)
             
@@ -556,17 +554,40 @@ else:
                     outperform = tot_chg_pct - sp500_change
                     st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_y - tot_dby, False)})")
                     st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 대비 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**")
+                    
+                    # [완벽 복구 완료] 날아갔던 포트폴리오 양극단 특징주 분석 패널 부활
+                    st.write("---")
+                    st.markdown("**🏆 포트폴리오 양극단 특징주**")
+                    valid_df_y = df_y.dropna(subset=['어제변동률'])
+                    if not valid_df_y.empty:
+                        top, btm = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()], valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
+                        c1, c2 = st.columns(2)
+                        with c1: st.success(f"🚀 **최고 효자:** {top['종목']} ({get_color_text(top['어제변동률'])})")
+                        with c2: st.error(f"📉 **최대 구멍:** {btm['종목']} ({get_color_text(btm['어제변동률'])})")
                 
+                # [복구 및 업그레이드] 프롬프트 자동 생성기 
                 st.write("") 
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
-                if is_market_closed or m_state.startswith("⚪"): st.info("💡 프리마켓 개장 전이므로 실시간 급변동 감지가 비활성화됩니다.")
+                if is_market_closed or m_state.startswith("⚪"): 
+                    st.info("💡 프리마켓 개장 전이므로 실시간 급변동 감지가 비활성화됩니다.")
                 else:
                     active_df = df[df['당일 변동 (%)'] != 0.0]
                     if len(active_df) > 0:
                         top_mover = active_df.loc[active_df['당일 변동 (%)'].abs().idxmax()]
                         if abs(top_mover['당일 변동 (%)']) >= 3.0:
                             st.error(f"🚨 **[특징주 감지]** 현재 **{top_mover['종목명']}({top_mover['티커']})** 종목이 **{get_color_text(top_mover['당일 변동 (%)'])}** 급변동 중입니다.")
-                        else: st.success("✔️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
+                            
+                            prompt_text = (
+                                f"[{now_kr.strftime('%Y년 %m월 %d일 %H:%M')} KST 기준]\n"
+                                f"내 포트폴리오의 [{top_mover['티커']}] 종목이 {top_mover['당일 변동 (%)']:+.2f}% 급변동 중이다.\n"
+                                f"외신 및 공시를 기반으로 원인과 대응책을 분석하되, 반드시 다음 프로세스를 거쳐서 답변해라:\n"
+                                f"1단계: 실시간 가격 확인\n"
+                                f"2단계: 뉴스 매칭\n"
+                                f"3단계: 정합성 검증"
+                            )
+                            st.code(prompt_text, language="markdown")
+                        else: 
+                            st.success("✔️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
 
     with tab2:
         st.subheader("🌍 매크로 경제 지표 종합 대시보드")
