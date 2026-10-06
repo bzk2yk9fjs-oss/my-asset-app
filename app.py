@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.22: 배당 트래킹 통합 + 양극단 특징주(최고 효자/구멍) 및 프롬프트 완벽 복구")
+st.write("V5.23: 오전 9시 데이터 증발 버그 픽스 (V4.14 fast_info 비상발전기 폴백 복구)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -152,7 +152,6 @@ def fetch_market_data(tickers_tuple):
         try:
             last_ts = getattr(sp_obj.fast_info, 'lastTradeTime', None)
             if not last_ts: last_ts = getattr(sp_obj.fast_info, 'last_trade_time', None)
-            
             if last_ts is not None:
                 if isinstance(last_ts, (int, float)):
                     dt_obj = datetime.datetime.fromtimestamp(last_ts, pytz.utc)
@@ -168,6 +167,7 @@ def fetch_market_data(tickers_tuple):
     for tk in tickers_tuple:
         tk_obj = yf.Ticker(tk, session=yf_session)
         
+        # 실시간 가격(또는 애프터마켓 가격) 추출
         try: 
             intra = tk_obj.history(period="3d", interval="5m", prepost=True)
             if not intra.empty and pd.notna(intra['Close'].iloc[-1]):
@@ -177,7 +177,15 @@ def fetch_market_data(tickers_tuple):
             if math.isnan(live): live = 0.0
         except: 
             live = 0.0
+            
+        # [핵심] V4.14의 강력한 무기: fast_info.previous_close 캐싱 (비상발전기 용도)
+        try:
+            prev_c = float(tk_obj.fast_info.previous_close)
+            if math.isnan(prev_c): prev_c = 0.0
+        except: 
+            prev_c = 0.0
         
+        # 일간 차트 추출
         try: 
             hist = tk_obj.history(period="15d", interval="1d")
             if not hist.empty:
@@ -185,7 +193,7 @@ def fetch_market_data(tickers_tuple):
                 else: hist.index = hist.index.tz_convert(ny_tz)
         except: hist = pd.DataFrame()
         
-        market_data['STOCKS'][tk] = {'live': live, 'hist': hist}
+        market_data['STOCKS'][tk] = {'live': live, 'hist': hist, 'prev_close': prev_c}
         
     return market_data
 
@@ -440,25 +448,37 @@ else:
                 avg_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_live_fx
                 category, kor_name = get_category(ticker), KOR_NAMES.get(ticker, ticker)
                 
-                stock_data = fetched_data['STOCKS'].get(ticker, {'live': 0.0, 'hist': pd.DataFrame()})
-                c_price, df_1d = stock_data['live'], stock_data['hist']
+                # [V5.23 핵심 수정] 종목별 독자적 달력 운용 및 fast_info 폴백
+                stock_data = fetched_data['STOCKS'].get(ticker, {'live': 0.0, 'hist': pd.DataFrame(), 'prev_close': 0.0})
+                c_price, df_1d, fast_prev = stock_data['live'], stock_data['hist'], stock_data['prev_close']
                 
-                def get_close(d_target):
-                    if not df_1d.empty:
-                        match = df_1d[df_1d.index.date == d_target]
-                        if not match.empty and pd.notna(match['Close'].iloc[-1]): 
-                            return float(match['Close'].iloc[-1])
-                    return 0.0
+                t_close, d_close = 0.0, 0.0
+                if not df_1d.empty:
+                    s_dates = df_1d.index.date.tolist()
+                    if now_ny.time() >= datetime.time(16, 0): 
+                        s_comp = [d for d in s_dates if d <= now_ny.date()]
+                    else: 
+                        s_comp = [d for d in s_dates if d < now_ny.date()]
+                    
+                    if len(s_comp) >= 2:
+                        t_close = float(df_1d[df_1d.index.date == s_comp[-1]]['Close'].iloc[-1])
+                        d_close = float(df_1d[df_1d.index.date == s_comp[-2]]['Close'].iloc[-1])
+                    elif len(s_comp) == 1:
+                        t_close = float(df_1d[df_1d.index.date == s_comp[-1]]['Close'].iloc[-1])
+                        d_close = t_close
                 
-                t_close, d_close = get_close(target_date), get_close(prev_target_date)
+                # 비상 발전기 가동 (야후 일간 차트 서버가 늦게 갱신될 때)
+                if t_close == 0.0 or math.isnan(t_close): t_close = fast_prev
+                if d_close == 0.0 or math.isnan(d_close): d_close = fast_prev
                 
                 if is_market_closed and t_close > 0:
                     c_price = t_close
+                
                 if c_price == 0.0 or t_close == 0.0 or d_close == 0.0:
                     if shares > 0: error_tickers.append(ticker)
                 
                 y_change = ((t_close - d_close) / d_close) * 100 if d_close > 0 else 0.0
-                if t_close > 0 and d_close > 0 and shares > 0:
+                if t_close > 0 and d_close > 0 and shares > 0 and t_close != d_close:
                     yesterday_recap.append({
                         "종목": kor_name, "그룹": category, "어제변동률": y_change,
                         "어제가치": t_close * shares, "그제가치": d_close * shares,
@@ -512,7 +532,7 @@ else:
 
             st.info(market_time_info)
             if current_live_fx == 0.0: st.error("🚨 **[환율 데이터 오류]** 실시간 환율 수신 불가.")
-            if error_tickers: st.error(f"🚨 **[데이터 수신 오류]** 종목 데이터 누락: **{', '.join(set(error_tickers))}**")
+            if error_tickers: st.error(f"🚨 **[데이터 수신 오류]** 일시적인 야후 서버 지연으로 데이터가 누락되었습니다: **{', '.join(set(error_tickers))}**\n*(5분 뒤 새로고침을 누르세요)*")
             
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
             col1, col2, col3, col4, col5 = st.columns(5)
@@ -539,82 +559,4 @@ else:
                                             "매입환율": st.column_config.NumberColumn("매입환율", format="%.2f"),
                                             "누적배당($)": st.column_config.NumberColumn("누적배당($)", format="$%.2f"),
                                             "주가수익(%)": st.column_config.NumberColumn("단순주가(%)", format="%.2f%%"),
-                                            "총수익률(TR%)": st.column_config.NumberColumn("총수익률(TR%)", format="%.2f%%"),
-                                            "당일 변동 (%)": st.column_config.NumberColumn(f"{short_label} 변동(%)", format="%.2f%%"),
-                                            "평가액 ($)": st.column_config.NumberColumn("평가액($)", format="$%.2f"),
-                                            "비중": st.column_config.ProgressColumn("비중(%)", format="%.2f%%", min_value=0, max_value=100)})
-                st.divider()
-                
-                st.header("📰 시황 분석 리포트 (투트랙)")
-                st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 정규장 마감 기준)")
-                if yesterday_recap:
-                    df_y = pd.DataFrame(yesterday_recap)
-                    tot_dby, tot_y = df_y['그제가치'].sum(), df_y['어제가치'].sum()
-                    tot_chg_pct = ((tot_y - tot_dby) / tot_dby * 100) if tot_dby > 0 else 0.0
-                    outperform = tot_chg_pct - sp500_change
-                    st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_y - tot_dby, False)})")
-                    st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 대비 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**")
-                    
-                    # [완벽 복구 완료] 날아갔던 포트폴리오 양극단 특징주 분석 패널 부활
-                    st.write("---")
-                    st.markdown("**🏆 포트폴리오 양극단 특징주**")
-                    valid_df_y = df_y.dropna(subset=['어제변동률'])
-                    if not valid_df_y.empty:
-                        top, btm = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()], valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
-                        c1, c2 = st.columns(2)
-                        with c1: st.success(f"🚀 **최고 효자:** {top['종목']} ({get_color_text(top['어제변동률'])})")
-                        with c2: st.error(f"📉 **최대 구멍:** {btm['종목']} ({get_color_text(btm['어제변동률'])})")
-                
-                # [복구 및 업그레이드] 프롬프트 자동 생성기 
-                st.write("") 
-                st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
-                if is_market_closed or m_state.startswith("⚪"): 
-                    st.info("💡 프리마켓 개장 전이므로 실시간 급변동 감지가 비활성화됩니다.")
-                else:
-                    active_df = df[df['당일 변동 (%)'] != 0.0]
-                    if len(active_df) > 0:
-                        top_mover = active_df.loc[active_df['당일 변동 (%)'].abs().idxmax()]
-                        if abs(top_mover['당일 변동 (%)']) >= 3.0:
-                            st.error(f"🚨 **[특징주 감지]** 현재 **{top_mover['종목명']}({top_mover['티커']})** 종목이 **{get_color_text(top_mover['당일 변동 (%)'])}** 급변동 중입니다.")
-                            
-                            prompt_text = (
-                                f"[{now_kr.strftime('%Y년 %m월 %d일 %H:%M')} KST 기준]\n"
-                                f"내 포트폴리오의 [{top_mover['티커']}] 종목이 {top_mover['당일 변동 (%)']:+.2f}% 급변동 중이다.\n"
-                                f"외신 및 공시를 기반으로 원인과 대응책을 분석하되, 반드시 다음 프로세스를 거쳐서 답변해라:\n"
-                                f"1단계: 실시간 가격 확인\n"
-                                f"2단계: 뉴스 매칭\n"
-                                f"3단계: 정합성 검증"
-                            )
-                            st.code(prompt_text, language="markdown")
-                        else: 
-                            st.success("✔️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
-
-    with tab2:
-        st.subheader("🌍 매크로 경제 지표 종합 대시보드")
-        st.markdown("### 1. S&P 500 섹터 히트맵")
-        components.html('''<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js" async>{"exchanges": [],"dataSource": "SPX500","grouping": "sector","blockSize": "market_cap_basic","blockColor": "change","locale": "kr","colorTheme": "light","hasTopBar": false,"isDataSetEnabled": false,"isZoomEnabled": true,"hasSymbolTooltip": true,"width": "100%","height": "500"}</script></div>''', height=500)
-        st.divider()
-        st.markdown("### 2. 핵심 매크로 지표 (실시간 숫자 뷰)")
-        krw, tnx, wti = macro_cache['USDKRW'], macro_cache['TNX'], macro_cache['WTI']
-        
-        mac1, mac2, mac3 = st.columns(3)
-        with mac1:
-            with st.container(border=True):
-                st.markdown("**🇺🇸 USD/KRW 환율**")
-                st.markdown(f"### {krw['live']:,.2f} 원")
-                st.markdown(f"**전일 대비: {get_macro_color_text(krw['change'], False, suffix='원')} ({get_macro_color_text(krw['pct'], True)})**")
-        with mac2:
-            with st.container(border=True):
-                st.markdown("**미국 10년물 국채 금리**")
-                st.markdown(f"### {tnx['live']:.3f} %")
-                st.markdown(f"**전일 대비: {get_macro_color_text(tnx['change'], False, suffix='%p')} ({get_macro_color_text(tnx['pct'], True)})**")
-        with mac3:
-            with st.container(border=True):
-                st.markdown("**🛢️ WTI 원유 (선물)**")
-                st.markdown(f"### ${wti['live']:.2f}")
-                st.markdown(f"**전일 대비: {get_macro_color_text(wti['change'], False, prefix='$')} ({get_macro_color_text(wti['pct'], True)})**")
-        st.divider()
-        
-        st.markdown("### 3. 시장 심리 및 금리 예측 지표")
-        st.markdown("👉 **[🔗 CNN Fear & Greed Index 실시간 확인하기 (클릭)](https://edition.cnn.com/markets/fear-and-greed)**")
-        st.markdown("👉 **[🔗 CME FedWatch Tool (금리 인상 확률) 확인하기 (클릭)](https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html)**")
+                                            "총수익률(
