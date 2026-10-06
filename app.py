@@ -1,6 +1,4 @@
-
-
-Import streamlit as st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import gspread
@@ -47,8 +45,10 @@ def get_color_text(val, is_percent=True):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
-    if is_percent: res = f"{sign}{fmt}%"
-    else: res = f"{sign}${abs(val):.2f}"
+    if is_percent: 
+        res = f"{sign}{fmt}%"
+    else: 
+        res = f"{sign}${abs(val):.2f}"
     
     if val > 0: return f":green[{res}]"
     elif val < 0: return f":red[{res}]"
@@ -59,8 +59,10 @@ def get_macro_color_text(val, is_percent=True, prefix="", suffix=""):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
     fmt = f"{val:.2f}"
-    if is_percent: res = f"{sign}{fmt}%"
-    else: res = f"{sign}{prefix}{abs(val):.2f}{suffix}"
+    if is_percent: 
+        res = f"{sign}{fmt}%"
+    else: 
+        res = f"{sign}{prefix}{abs(val):.2f}{suffix}"
     
     if val > 0: return f":red[{res}]"
     elif val < 0: return f":blue[{res}]"
@@ -326,13 +328,17 @@ else:
                 df_5m = ticker_obj.history(period="15d", interval="5m", prepost=True)
                 
                 if not df_1d.empty:
-                    if df_1d.index.tz is None: df_1d.index = df_1d.index.tz_localize(ny_tz)
-                    else: df_1d.index = df_1d.index.tz_convert(ny_tz)
+                    if df_1d.index.tz is None: 
+                        df_1d.index = df_1d.index.tz_localize(ny_tz)
+                    else: 
+                        df_1d.index = df_1d.index.tz_convert(ny_tz)
                     df_1d['date'] = df_1d.index.date
                     
                 if not df_5m.empty:
-                    if df_5m.index.tz is None: df_5m.index = df_5m.index.tz_localize('UTC').tz_convert(ny_tz)
-                    else: df_5m.index = df_5m.index.tz_convert(ny_tz)
+                    if df_5m.index.tz is None: 
+                        df_5m.index = df_5m.index.tz_localize('UTC').tz_convert(ny_tz)
+                    else: 
+                        df_5m.index = df_5m.index.tz_convert(ny_tz)
                     df_5m_reg = df_5m.between_time('09:30', '16:00')
                     
                 def get_exact_close(d_target):
@@ -398,8 +404,10 @@ else:
             
             sp_1d = yf.Ticker("^GSPC").history(period="15d", interval="1d")
             if not sp_1d.empty:
-                if sp_1d.index.tz is None: sp_1d.index = sp_1d.index.tz_localize(ny_tz)
-                else: sp_1d.index = sp_1d.index.tz_convert(ny_tz)
+                if sp_1d.index.tz is None: 
+                    sp_1d.index = sp_1d.index.tz_localize(ny_tz)
+                else: 
+                    sp_1d.index = sp_1d.index.tz_convert(ny_tz)
                 sp_1d['date'] = sp_1d.index.date
                 
             def get_sp500_close(d_target):
@@ -463,8 +471,10 @@ else:
                 
                 st.subheader("📊 포트폴리오 상세 (주식 성과 및 환차손익 분리)")
                 
-                fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, 
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig = px.pie(
+                    df, values='평가액 ($)', names='그룹', hole=0.4, 
+                    color_discrete_sequence=px.colors.qualitative.Pastel
+                )
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
@@ -587,7 +597,7 @@ else:
               "hasSymbolTooltip": true,
               "width": "100%",
               "height": "500"
-            }
+              }
               </script>
             </div>
             ''', height=500
