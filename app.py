@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.23: 오전 9시 데이터 증발 버그 픽스 (V4.14 fast_info 비상발전기 폴백 복구)")
+st.write("V5.25: 수익률 정밀도 및 시황 브리핑 복구 (V4.14 독립 시계열 및 라이브 전광판 엔진 롤백)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -61,7 +61,8 @@ KOR_NAMES = {
     'SSO': '프로셰어즈 SSO (S&P 500 2X)', 'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
     'QLD': '프로셰어즈 QLD (나스닥 2X)', 'SOXX': 'iShares 반도체 ETF', 'USD': '프로셰어즈 반도체 2X',
     'SNXX': '트레이더 샌디스크 2X', 'NVDL': '그래니트셰어즈 엔비디아 2X', 
-    'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X'
+    'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X',
+    'LEU': '센트러스 에너지'
 }
 
 # ==========================================
@@ -167,33 +168,42 @@ def fetch_market_data(tickers_tuple):
     for tk in tickers_tuple:
         tk_obj = yf.Ticker(tk, session=yf_session)
         
-        # 실시간 가격(또는 애프터마켓 가격) 추출
-        try: 
-            intra = tk_obj.history(period="3d", interval="5m", prepost=True)
-            if not intra.empty and pd.notna(intra['Close'].iloc[-1]):
-                live = float(intra['Close'].iloc[-1])
-            else:
-                live = float(tk_obj.fast_info.last_price)
-            if math.isnan(live): live = 0.0
-        except: 
-            live = 0.0
-            
-        # [핵심] V4.14의 강력한 무기: fast_info.previous_close 캐싱 (비상발전기 용도)
+        # [V5.25 핵심 복구] 5분봉의 불완전성을 버리고, V4.14의 완벽한 전광판 라이브 가격만 사용
         try:
-            prev_c = float(tk_obj.fast_info.previous_close)
-            if math.isnan(prev_c): prev_c = 0.0
-        except: 
-            prev_c = 0.0
-        
-        # 일간 차트 추출
-        try: 
-            hist = tk_obj.history(period="15d", interval="1d")
+            c_price = float(tk_obj.fast_info.last_price)
+            if math.isnan(c_price): c_price = 0.0
+        except:
+            c_price = 0.0
+            
+        # [V5.25 핵심 복구] S&P 500 달력에 종속되지 않고, 개별 종목 스스로 최근 5일치 일간 차트를 뜯어옴
+        try:
+            hist = tk_obj.history(period="5d", interval="1d")
             if not hist.empty:
                 if hist.index.tz is None: hist.index = hist.index.tz_localize(ny_tz)
                 else: hist.index = hist.index.tz_convert(ny_tz)
-        except: hist = pd.DataFrame()
+                
+                if len(hist) >= 2:
+                    t_close = float(hist['Close'].iloc[-1])
+                    d_close = float(hist['Close'].iloc[-2])
+                elif len(hist) == 1:
+                    t_close = float(hist['Close'].iloc[-1])
+                    d_close = t_close
+                else:
+                    t_close = c_price
+                    d_close = c_price
+            else:
+                t_close, d_close = 0.0, 0.0
+        except:
+            t_close, d_close = 0.0, 0.0
+            
+        # 일간 차트 랙 발생 시 비상 캐시데이터 가동
+        try:
+            prev_c = float(tk_obj.fast_info.previous_close)
+            if not math.isnan(prev_c) and t_close == 0.0:
+                t_close = prev_c
+        except: pass
         
-        market_data['STOCKS'][tk] = {'live': live, 'hist': hist, 'prev_close': prev_c}
+        market_data['STOCKS'][tk] = {'live': c_price, 't_close': t_close, 'd_close': d_close}
         
     return market_data
 
@@ -305,7 +315,7 @@ except Exception:
 if df_trades.empty:
     st.warning("장부 데이터가 비어있습니다. 사이드바에서 매매/배당 기록을 추가해주세요.")
 else:
-    group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)'}
+    group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)', 'LEU': '기타 (Others)'}
     
     if '그룹' in df_trades.columns:
         for _, row in df_trades.iterrows():
@@ -369,26 +379,6 @@ else:
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
             now_ny = datetime.datetime.now(ny_tz)
             
-            trading_dates = []
-            if not sp_hist.empty:
-                trading_dates = sp_hist.index.date.tolist()
-                if now_ny.time() >= datetime.time(16, 0): completed_dates = [d for d in trading_dates if d <= now_ny.date()]
-                else: completed_dates = [d for d in trading_dates if d < now_ny.date()]
-                
-                if len(completed_dates) >= 2:
-                    target_date, prev_target_date = completed_dates[-1], completed_dates[-2]
-                    last_closed_date_str = target_date.strftime('%m/%d')
-                else:
-                    sp_hist = pd.DataFrame() 
-            
-            if sp_hist.empty:
-                target_date = now_ny.date()
-                if now_ny.time() < datetime.time(16, 0): target_date -= datetime.timedelta(days=1)
-                while target_date.weekday() >= 5: target_date -= datetime.timedelta(days=1)
-                prev_target_date = target_date - datetime.timedelta(days=1)
-                while prev_target_date.weekday() >= 5: prev_target_date -= datetime.timedelta(days=1)
-                last_closed_date_str = target_date.strftime('%m/%d')
-            
             t_val = now_ny.hour + now_ny.minute / 60.0
             wd = now_ny.weekday() 
             
@@ -403,7 +393,7 @@ else:
             elif wd == 4 and t_val >= 20.0: is_weekend = True
             elif wd == 6 and t_val < 20.0: is_weekend = True
 
-            is_today_in_data = now_ny.date() in trading_dates
+            is_today_in_data = now_ny.date() in (sp_hist.index.date.tolist() if not sp_hist.empty else [])
             is_holiday = False
             if 0 <= wd <= 4 and t_val >= 10.0 and not is_today_in_data and not sp_hist.empty:
                 is_holiday = True
@@ -434,13 +424,11 @@ else:
             
             market_time_info = f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}"
 
-            def get_sp_close(d_target):
-                if sp_hist.empty: return 0.0
-                match = sp_hist[sp_hist.index.date == d_target]
-                return float(match['Close'].iloc[-1]) if not match.empty else 0.0
-            
-            g_target, g_prev = get_sp_close(target_date), get_sp_close(prev_target_date)
-            sp500_change = ((g_target - g_prev) / g_prev) * 100 if g_prev > 0 else 0.0
+            sp500_change = 0.0
+            if len(sp_hist) >= 2:
+                g_target = float(sp_hist['Close'].iloc[-1])
+                g_prev = float(sp_hist['Close'].iloc[-2])
+                if g_prev > 0: sp500_change = ((g_target - g_prev) / g_prev) * 100
 
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
@@ -448,35 +436,16 @@ else:
                 avg_fx = float(info['총투자금KRW']) / float(info['총투자금USD']) if info['총투자금USD'] > 0 else current_live_fx
                 category, kor_name = get_category(ticker), KOR_NAMES.get(ticker, ticker)
                 
-                # [V5.23 핵심 수정] 종목별 독자적 달력 운용 및 fast_info 폴백
-                stock_data = fetched_data['STOCKS'].get(ticker, {'live': 0.0, 'hist': pd.DataFrame(), 'prev_close': 0.0})
-                c_price, df_1d, fast_prev = stock_data['live'], stock_data['hist'], stock_data['prev_close']
+                stock_data = fetched_data['STOCKS'].get(ticker, {'live': 0.0, 't_close': 0.0, 'd_close': 0.0})
+                c_price = stock_data['live']
+                t_close = stock_data['t_close']
+                d_close = stock_data['d_close']
                 
-                t_close, d_close = 0.0, 0.0
-                if not df_1d.empty:
-                    s_dates = df_1d.index.date.tolist()
-                    if now_ny.time() >= datetime.time(16, 0): 
-                        s_comp = [d for d in s_dates if d <= now_ny.date()]
-                    else: 
-                        s_comp = [d for d in s_dates if d < now_ny.date()]
-                    
-                    if len(s_comp) >= 2:
-                        t_close = float(df_1d[df_1d.index.date == s_comp[-1]]['Close'].iloc[-1])
-                        d_close = float(df_1d[df_1d.index.date == s_comp[-2]]['Close'].iloc[-1])
-                    elif len(s_comp) == 1:
-                        t_close = float(df_1d[df_1d.index.date == s_comp[-1]]['Close'].iloc[-1])
-                        d_close = t_close
-                
-                # 비상 발전기 가동 (야후 일간 차트 서버가 늦게 갱신될 때)
-                if t_close == 0.0 or math.isnan(t_close): t_close = fast_prev
-                if d_close == 0.0 or math.isnan(d_close): d_close = fast_prev
-                
-                if is_market_closed and t_close > 0:
-                    c_price = t_close
-                
-                if c_price == 0.0 or t_close == 0.0 or d_close == 0.0:
+                if is_market_closed and t_close > 0: c_price = t_close
+                if c_price == 0.0 or t_close == 0.0:
                     if shares > 0: error_tickers.append(ticker)
                 
+                # 전일장 마감 요약 로직: 최근 두 종가의 차이 (시간 루프 방지용 절대 기준)
                 y_change = ((t_close - d_close) / d_close) * 100 if d_close > 0 else 0.0
                 if t_close > 0 and d_close > 0 and shares > 0 and t_close != d_close:
                     yesterday_recap.append({
@@ -566,7 +535,7 @@ else:
                 st.divider()
                 
                 st.header("📰 시황 분석 리포트 (투트랙)")
-                st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 정규장 마감 기준)")
+                st.subheader(f"🌙 1. 최근 정규장 마감 요약")
                 if yesterday_recap:
                     df_y = pd.DataFrame(yesterday_recap)
                     tot_dby, tot_y = df_y['그제가치'].sum(), df_y['어제가치'].sum()
