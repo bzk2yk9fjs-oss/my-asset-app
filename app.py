@@ -471,12 +471,14 @@ else:
                 if trade_type in ['달러 입금', '달러 출금', '배당']:
                     continue
                     
+                # 🚨 KeyError 방지: 총배당KRW 초기화 포함
                 if ticker not in portfolio: 
                     portfolio[ticker] = {
                         '수량': 0.0, 
                         '총투자금USD': 0.0, 
                         '총투자금KRW': 0.0, 
-                        '총배당USD': 0.0
+                        '총배당USD': 0.0,
+                        '총배당KRW': 0.0
                     }
                     
                 if trade_type == '매수':
@@ -509,12 +511,14 @@ else:
                 usd_pool_cost_krw -= price * avg_cost
                 continue
             
+            # 🚨 KeyError 방지: 총배당KRW 초기화 포함
             if ticker not in portfolio: 
                 portfolio[ticker] = {
                     '수량': 0.0, 
                     '총투자금USD': 0.0, 
                     '총투자금KRW': 0.0, 
-                    '총배당USD': 0.0
+                    '총배당USD': 0.0,
+                    '총배당KRW': 0.0
                 }
             
             if trade_type == '매수':
@@ -558,6 +562,8 @@ else:
                 usd_pool_cost_krw += price * fx
                 
                 portfolio[ticker]['총배당USD'] += price
+                # 🚨 KeyError 방지: 배당금의 원화 가치 누적 
+                portfolio[ticker]['총배당KRW'] += price * fx
 
         # 보유 수량이 0이어도 배당 기록이 있으면 출력
         portfolio = {k: v for k, v in portfolio.items() if (v['수량'] > 0.0001 or v['총배당USD'] > 0)}
