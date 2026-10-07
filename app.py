@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.27: 섹터/그룹별 기여도 완벽 복구 및 V4.14 정밀 타격 엔진 통합")
+st.write("V5.26: V4.14 최강의 엔진 롤백 (5분봉 정규장 시계열 및 종가 정밀 추적기 완벽 복구)")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -130,11 +130,13 @@ def get_macro_data():
             macros[key] = {"live": 0.0, "change": 0.0, "pct": 0.0}
     return macros
 
+# [V5.26 핵심 복구] V4.14의 강력한 5분봉 정규장 시계열 엔진 완전 롤백
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_market_data(tickers_tuple):
     market_data = {'STOCKS': {}}
     ny_tz = pytz.timezone('America/New_York')
     
+    # S&P 500 5분봉에서 실제 거래일 달력 추출
     sp500_5m = yf.Ticker("^GSPC", session=yf_session).history(period="15d", interval="5m")
     if not sp500_5m.empty:
         if sp500_5m.index.tz is None: 
@@ -403,6 +405,7 @@ else:
                 else:
                     df_5m_reg = pd.DataFrame()
                     
+                # [V4.14 엔진] 정규장 데이터만 콕 집어서 종가 추출
                 def get_exact_close(d_target):
                     if not df_1d.empty and 'date' in df_1d.columns:
                         match_1d = df_1d[df_1d['date'] == d_target]
@@ -417,6 +420,7 @@ else:
                 t_close = get_exact_close(target_date)
                 d_close = get_exact_close(prev_target_date)
                 
+                # [V4.14 엔진] 오차 0% 라이브 가격 추출
                 if not df_5m.empty:
                     valid_live = df_5m.dropna(subset=['Close'])
                     c_price = float(valid_live['Close'].iloc[-1]) if not valid_live.empty else t_close
@@ -440,6 +444,7 @@ else:
                 value_usd = c_price * shares
                 change_dollar = (c_price - t_close) * shares if t_close > 0 else 0.0
                 
+                # 달러 수익률 로직 (V4.14 완전 동일)
                 return_percent = ((c_price - avg_usd_price) / avg_usd_price) * 100 if avg_usd_price > 0 else 0.0
                 daily_percent = ((c_price - t_close) / t_close) * 100 if t_close > 0 else 0.0
                 
@@ -470,6 +475,7 @@ else:
                         "평가액 ($)": round(value_usd, 2)
                     })
 
+            # S&P 500 비교 로직 복구
             def get_sp500_close(d_target):
                 if not sp500_reg.empty:
                     match_5m = sp500_reg[sp500_reg.index.date == d_target]
@@ -540,18 +546,6 @@ else:
                     
                     st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_chg_dollar, False)})")
                     st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 대비 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**")
-                    
-                    # [V5.27 핵심 복구] 섹터/그룹별 기여도 완벽 복원
-                    st.write("---")
-                    st.markdown("**🧩 섹터/그룹별 기여도**")
-                    grp_agg = df_y.groupby('그룹').agg({'그제가치': 'sum', '어제가치': 'sum', '변동액': 'sum'}).reset_index()
-                    grp_agg['수익률'] = (grp_agg['변동액'] / grp_agg['그제가치']) * 100
-                    grp_agg = grp_agg.sort_values(by='수익률', ascending=False)
-                    
-                    grp_texts = []
-                    for _, row in grp_agg.iterrows():
-                        grp_texts.append(f"**{row['그룹']}** {get_color_text(row['수익률'])}")
-                    st.write(" | ".join(grp_texts))
                     
                     st.write("---")
                     st.markdown("**🏆 포트폴리오 양극단 특징주**")
