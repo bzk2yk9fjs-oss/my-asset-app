@@ -20,7 +20,7 @@ INITIAL_USD_BALANCE = 126.77  # 10월 7일 기준 미환전 달러 예수금 초
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V6.3: V5.26 원본 구조 100% 전면 복구 + 주식손익 단독 표기 및 찐 투자성과표(미환전/확정 분리) 완전체")
+st.write("V6.4: V5.26 오리지널 디테일 무압축 100% 복구 + 찐 투자성과표(MTM 상계 엔진) 완전체")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -53,23 +53,56 @@ yf_session.mount("http://", adapter)
 # 1. 스마트 한글 사전 및 백엔드 데이터 캡슐화
 # ==========================================
 KOR_NAMES = {
-    'VOO': '뱅가드 S&P 500', 'SGOV': '미국 0-3개월 초단기채', 'KO': '코카콜라', 
-    'BAC': '뱅크오브아메리카', 'NEE': '넥스트에라 에너지', 'LMT': '록히드 마틴', 
-    'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': '스페이스X', 
-    'RGTI': '리게티 컴퓨팅', 'ARQQ': '아킷 퀀텀',
-    'AAPL': '애플', 'MSFT': '마이크로소프트', 'AMZN': '아마존닷컴', 'NVDA': '엔비디아', 
-    'TSLA': '테슬라', 'META': '메타 플랫폼스', 'BRK.B': '버크셔 해서웨이', 'AVGO': '브로드컴', 
-    'TSM': 'TSMC', 'LLY': '일라이 릴리', 'JPM': 'JP모건 체이스', 'V': '비자', 
-    'XOM': '엑슨모빌', 'UNH': '유나이티드헬스', 'PG': '프록터 앤 갬블 (P&G)', 
-    'MA': '마스터카드', 'JNJ': '존슨앤존슨', 'HD': '홈디포', 'MRK': '머크', 'CVX': '쉐브론',
-    'SPY': 'SPDR S&P 500', 'QQQ': '인베스코 QQQ', 'DIA': 'SPDR 다우존스',
-    'SCHD': '슈왑 배당 ETF (SCHD)', 'JEPI': 'JP모건 커버드콜 (JEPI)', 'TLT': '미국 20년 이상 장기채',
-    'TQQQ': '프로셰어즈 TQQQ (나스닥 3X)', 'SQQQ': '프로셰어즈 SQQQ (인버스 3X)', 
-    'SOXL': '디렉시온 SOXL (반도체 3X)', 'SOXS': '디렉시온 SOXS (인버스 3X)',
-    'SSO': '프로셰어즈 SSO (S&P 500 2X)', 'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
-    'QLD': '프로셰어즈 QLD (나스닥 2X)', 'SOXX': 'iShares 반도체 ETF', 'USD': '프로셰어즈 반도체 2X',
-    'SNXX': '트레이더 샌디스크 2X', 'NVDL': '그래니트셰어즈 엔비디아 2X', 
-    'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X',
+    'VOO': '뱅가드 S&P 500', 
+    'SGOV': '미국 0-3개월 초단기채', 
+    'KO': '코카콜라', 
+    'BAC': '뱅크오브아메리카', 
+    'NEE': '넥스트에라 에너지', 
+    'LMT': '록히드 마틴', 
+    'GOOGL': '알파벳 A', 
+    'IBM': 'IBM', 
+    'SPCX': '스페이스X', 
+    'RGTI': '리게티 컴퓨팅', 
+    'ARQQ': '아킷 퀀텀',
+    'AAPL': '애플', 
+    'MSFT': '마이크로소프트', 
+    'AMZN': '아마존닷컴', 
+    'NVDA': '엔비디아', 
+    'TSLA': '테슬라', 
+    'META': '메타 플랫폼스', 
+    'BRK.B': '버크셔 해서웨이', 
+    'AVGO': '브로드컴', 
+    'TSM': 'TSMC', 
+    'LLY': '일라이 릴리', 
+    'JPM': 'JP모건 체이스', 
+    'V': '비자', 
+    'XOM': '엑슨모빌', 
+    'UNH': '유나이티드헬스', 
+    'PG': '프록터 앤 갬블 (P&G)', 
+    'MA': '마스터카드', 
+    'JNJ': '존슨앤존슨', 
+    'HD': '홈디포', 
+    'MRK': '머크', 
+    'CVX': '쉐브론',
+    'SPY': 'SPDR S&P 500', 
+    'QQQ': '인베스코 QQQ', 
+    'DIA': 'SPDR 다우존스',
+    'SCHD': '슈왑 배당 ETF (SCHD)', 
+    'JEPI': 'JP모건 커버드콜 (JEPI)', 
+    'TLT': '미국 20년 이상 장기채',
+    'TQQQ': '프로셰어즈 TQQQ (나스닥 3X)', 
+    'SQQQ': '프로셰어즈 SQQQ (인버스 3X)', 
+    'SOXL': '디렉시온 SOXL (반도체 3X)', 
+    'SOXS': '디렉시온 SOXS (인버스 3X)',
+    'SSO': '프로셰어즈 SSO (S&P 500 2X)', 
+    'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
+    'QLD': '프로셰어즈 QLD (나스닥 2X)', 
+    'SOXX': 'iShares 반도체 ETF', 
+    'USD': '프로셰어즈 반도체 2X',
+    'SNXX': '트레이더 샌디스크 2X', 
+    'NVDL': '그래니트셰어즈 엔비디아 2X', 
+    'TSLL': '디렉시온 테슬라 1.5X', 
+    'CONL': '그래니트셰어즈 코인베이스 2X',
     'LEU': '센트러스 에너지'
 }
 
@@ -310,9 +343,14 @@ with st.sidebar:
                 t_price = st.number_input("체결 가격 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
                 
             t_fx = st.number_input("체결 환율 (원)", value=float(current_live_fx), min_value=0.00, format="%.2f", step=1.0)
+            
             t_group = st.selectbox("🧩 자산군 그룹 지정", [
-                "코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", 
-                "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"
+                "코어 (Core)", 
+                "방어 (Defensive)", 
+                "우량주 (Blue Chip)", 
+                "모험주 (Adventure)", 
+                "모멘텀 (Momentum)", 
+                "기타 (Others)"
             ])
             
             if st.form_submit_button(label="장부에 즉시 기록"):
@@ -397,9 +435,9 @@ with st.sidebar:
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("장부 데이터가 비어있습니다. 사이드바에서 매매/배당/환전 기록을 추가해주세요.")
+    st.warning("장부 데이터가 비어있습니다. 사이드바에서 기록을 추가해주세요.")
 else:
-    # 🚨 V5.26 오리지널 그룹 맵핑 상세 복구
+    # 🚨 V5.26 오리지널 그룹 맵핑 완벽 보존
     group_map = {
         'VOO': '코어 (Core)', 
         'SGOV': '코어 (Core)', 
@@ -430,7 +468,7 @@ else:
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
     with tab1:
-        # 🚀 달러 풀(Pool) 평단가 추적 엔진 (미환전/확정 정밀 분리용)
+        # 🚀 MTM 회계 엔진 (Zero-Cost Profit Tracking)
         usd_pool_qty = INITIAL_USD_BALANCE
         usd_pool_cost_krw = INITIAL_USD_BALANCE * current_live_fx 
         
@@ -438,6 +476,7 @@ else:
         realized_profit_usd = 0.0
 
         portfolio = {}
+        
         for _, row in df_trades.iterrows():
             ticker = str(row.get('종목', '')).strip().upper()
             trade_type = str(row.get('구분', '')).strip()
@@ -458,7 +497,7 @@ else:
             except: 
                 continue
             
-            # 🚀 날짜 파싱 및 기준일(10/7) 베이스라인 필터 적용
+            # 날짜 파싱 및 기준일(10/7) 베이스라인 필터 적용
             try:
                 t_date_obj = pd.to_datetime(t_date_str).date()
             except:
@@ -466,12 +505,11 @@ else:
                 
             is_past_trade = t_date_obj < MEASURE_START_DATE
             
-            # [1단계] 과거 데이터 처리: 오직 '보유 수량'과 '평단가' 뼈대만 유지 (수익/배당/환전 모두 초기화)
+            # [1단계] 과거 데이터 처리: 보유 수량 및 평단가 뼈대만 구축
             if is_past_trade:
                 if trade_type in ['달러 입금', '달러 출금', '배당']:
                     continue
                     
-                # 🚨 KeyError 방지: 총배당KRW 초기화 포함
                 if ticker not in portfolio: 
                     portfolio[ticker] = {
                         '수량': 0.0, 
@@ -494,7 +532,7 @@ else:
                     portfolio[ticker]['총투자금KRW'] -= (qty * avg_krw)
                 continue
             
-            # [2단계] 측정 시작일(10/7) 이후 실시간 데이터: 달러 Pool 평단가 추적 엔진 적용
+            # [2단계] 기준일 이후 실시간 데이터 (Zero-Cost MTM 회계 적용)
             def get_usd_avg_cost():
                 return usd_pool_cost_krw / usd_pool_qty if usd_pool_qty > 0 else fx
 
@@ -505,13 +543,14 @@ else:
                 
             elif trade_type == '달러 출금':
                 avg_cost = get_usd_avg_cost()
-                locked_in_krw += price * (fx - avg_cost) # 환전 시 발생하는 원화 환차익(Lock-in)
+                
+                # 🚀 오직 달러를 환전(출금)할 때만 Lock-in 수익 발생!
+                locked_in_krw += price * (fx - avg_cost) 
                 
                 usd_pool_qty -= price
                 usd_pool_cost_krw -= price * avg_cost
                 continue
             
-            # 🚨 KeyError 방지: 총배당KRW 초기화 포함
             if ticker not in portfolio: 
                 portfolio[ticker] = {
                     '수량': 0.0, 
@@ -525,53 +564,44 @@ else:
                 avg_cost = get_usd_avg_cost()
                 usd_used = qty * price
                 
-                # 예수금에서 달러 차감
                 usd_pool_qty -= usd_used
                 usd_pool_cost_krw -= usd_used * avg_cost
                 
-                # 포트폴리오 자산으로 편입 (매수 당시의 시장 환율을 기록)
                 portfolio[ticker]['수량'] += qty
                 portfolio[ticker]['총투자금USD'] += usd_used
-                portfolio[ticker]['총투자금KRW'] += usd_used * fx
+                portfolio[ticker]['총투자금KRW'] += usd_used * avg_cost
                 
             elif trade_type == '매도' and portfolio[ticker]['수량'] > 0:
                 avg_usd = portfolio[ticker]['총투자금USD'] / portfolio[ticker]['수량']
                 avg_krw = portfolio[ticker]['총투자금KRW'] / portfolio[ticker]['수량']
                 
-                # 1. 주식 매도 시점의 KRW 확정 수익 (Lock-in 누적)
-                locked_in_krw += (qty * price * fx) - (qty * avg_krw)
-                # 2. 순수 달러 차익 누적
-                realized_profit_usd += (qty * price) - (qty * avg_usd)
+                principal_usd = qty * avg_usd
+                principal_krw = qty * avg_krw
+                
+                realized_profit_usd += (qty * price) - principal_usd
 
-                # 3. 매도한 달러는 다시 예수금 Pool 로 반환 (해당 시점의 환율로 원가 측정)
+                # 🚀 매도 대금 중 '원금'에 해당하는 부분만 Pool의 코스트(Cost)로 반환. 
+                # (수익금은 원가가 0원인 '순수 달러'로 처리됨)
                 usd_added = qty * price
                 usd_pool_qty += usd_added
-                usd_pool_cost_krw += usd_added * fx
+                usd_pool_cost_krw += principal_krw
                 
-                # 4. 포트폴리오 자산 차감
                 portfolio[ticker]['수량'] -= qty
-                portfolio[ticker]['총투자금USD'] -= (qty * avg_usd)
-                portfolio[ticker]['총투자금KRW'] -= (qty * avg_krw)
+                portfolio[ticker]['총투자금USD'] -= principal_usd
+                portfolio[ticker]['총투자금KRW'] -= principal_krw
                 
             elif trade_type == '배당':
-                # 배당금 수령 즉시 해당 시점 환율로 KRW 확정 수익(Lock-in) 처리
-                locked_in_krw += price * fx
-                
-                # 예수금 Pool 에 달러 추가
+                # 🚀 배당금은 원가가 0원인 '순수익'이므로 예수금 수량만 늘어남
                 usd_pool_qty += price
-                usd_pool_cost_krw += price * fx
-                
                 portfolio[ticker]['총배당USD'] += price
-                # 🚨 KeyError 방지: 배당금의 원화 가치 누적 
                 portfolio[ticker]['총배당KRW'] += price * fx
 
-        # 보유 수량이 0이어도 배당 기록이 있으면 출력
         portfolio = {k: v for k, v in portfolio.items() if (v['수량'] > 0.0001 or v['총배당USD'] > 0)}
         tickers_tuple = tuple(portfolio.keys())
         
         total_dividend_usd_all = sum(v['총배당USD'] for v in portfolio.values())
         
-        # 🚀 미환전 달러 잔고 최종 계산
+        # 🚀 미환전 달러 잔고 최종 반영
         usd_cash_balance = usd_pool_qty
 
         with st.spinner('V4.14 정밀 타격 엔진 가동 중...'):
@@ -579,7 +609,8 @@ else:
             trading_dates = fetched_data['trading_dates']
             sp500_reg = fetched_data['sp500_reg']
             
-            total_value_usd, total_invested_usd = 0.0, 0.0
+            total_value_usd = 0.0
+            total_invested_usd = 0.0
             total_daily_change_usd = 0.0
             total_fx_gain_loss_krw = 0.0
             
@@ -633,8 +664,14 @@ else:
                 
             market_time_info = f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}"
 
-            group_y_val = {grp: 0.0 for grp in ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]}
-            group_dby_val = {grp: 0.0 for grp in ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]}
+            group_y_val = {
+                "코어 (Core)": 0.0, "방어 (Defensive)": 0.0, "우량주 (Blue Chip)": 0.0, 
+                "모험주 (Adventure)": 0.0, "모멘텀 (Momentum)": 0.0, "기타 (Others)": 0.0
+            }
+            group_dby_val = {
+                "코어 (Core)": 0.0, "방어 (Defensive)": 0.0, "우량주 (Blue Chip)": 0.0, 
+                "모험주 (Adventure)": 0.0, "모멘텀 (Momentum)": 0.0, "기타 (Others)": 0.0
+            }
 
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
@@ -757,12 +794,12 @@ else:
             total_profit_krw_tr = (total_value_krw + total_dividend_current_krw) - total_invested_krw if current_live_fx > 0 else 0.0
             total_return_krw_tr = (total_profit_krw_tr / total_invested_krw) * 100 if (total_invested_krw > 0 and current_live_fx > 0) else 0.0
 
-            st.info(f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}")
+            st.info(market_time_info)
             if error_tickers: 
-                st.error(f"🚨 **[데이터 수신 오류]** 일시적인 야후 서버 지연으로 데이터 누락: **{', '.join(set(error_tickers))}**")
+                st.error(f"🚨 **[데이터 누락]** 야후 서버 지연: **{', '.join(set(error_tickers))}**")
             
             # ---------------------------------------------------------
-            # 🚀 수정 1: 주식 손익 단독 표기가 추가된 '6칸' 확장판 계좌 요약
+            # 🚀 주식 손익 단독 표기가 추가된 '6칸' 계좌 총괄 요약
             # ---------------------------------------------------------
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
             col1, col2, col3, col4, col5, col6 = st.columns(6)
@@ -801,7 +838,7 @@ else:
             )
             st.divider()
             
-            # --- V5.26 오리지널 포트폴리오 상세 및 데이터프레임 구조 ---
+            # --- 포트폴리오 상세 및 차트 구조 ---
             if results:
                 df = pd.DataFrame(results).sort_values(by="비중", ascending=False).reset_index(drop=True)
                 st.subheader("📊 포트폴리오 상세 (주식 성과 및 누적 배당 분리)")
@@ -838,9 +875,10 @@ else:
                 )
                 st.divider()
                 
-                # --- V5.26 오리지널 시황 분석 리포트 ---
+                # --- 시황 분석 리포트 ---
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 정규장 마감 기준)")
+                
                 if yesterday_recap:
                     df_y = pd.DataFrame(yesterday_recap)
                     tot_dby = df_y['그제가치'].sum()
@@ -866,7 +904,9 @@ else:
                     st.markdown("**🏆 포트폴리오 양극단 특징주**")
                     valid_df_y = df_y.dropna(subset=['어제변동률'])
                     if not valid_df_y.empty:
-                        top, btm = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()], valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
+                        top = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()]
+                        btm = valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
+                        
                         c1, c2 = st.columns(2)
                         with c1: 
                             st.success(f"🚀 **최고 효자:** {top['종목']} ({get_color_text(top['어제변동률'])})")
@@ -875,6 +915,7 @@ else:
                 
                 st.write("") 
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
+                
                 if is_market_closed or m_state.startswith("⚪"): 
                     st.info("💡 프리마켓 개장 전이므로 실시간 급변동 감지가 비활성화됩니다.")
                 else:
@@ -897,7 +938,7 @@ else:
                             st.success("✔️ 기준치(±3%)를 초과하는 실시간 급변동 종목이 없습니다.")
 
             # ---------------------------------------------------------
-            # 🚀 수정 2: 최하단 찐 투자 성과표 (미환전 vs 확정 분리 엔진)
+            # 🚀 최하단: 찐 투자 성과표 (Zero-Cost 미환전 vs 확정 분리 엔진)
             # ---------------------------------------------------------
             st.divider()
             st.header("⚖️ 최종 회계 결산: 찐 투자 성과표")
@@ -906,13 +947,16 @@ else:
             box2_profit_usd = realized_profit_usd + total_dividend_usd_all
             
             # 1. 미환전 달러 수익(실시간 노출) = (현재 예수금 실시간 가치) - (현재 예수금의 매입 원가)
+            # (배당금 및 수익금은 원가가 0원인 순수 달러이므로, 실시간 환율만큼 온전히 수익으로 잡힘)
             unexchanged_krw = (usd_pool_qty * current_live_fx) - usd_pool_cost_krw
             
             # 2. 총 누적 손익 = 미환전 수익 + 영구 고정된 수익(Lock-in)
             box3_profit_krw = unexchanged_krw + locked_in_krw
             
             # 3. 직관적인 델타 분리 텍스트 구성 (기호 포함)
-            delta_str = f"미환전 {int(unexchanged_krw):+,}원 / 확정 {int(locked_in_krw):+,}원"
+            sign_unex = "+" if unexchanged_krw > 0 else ""
+            sign_lock = "+" if locked_in_krw > 0 else ""
+            delta_str = f"미환전 {sign_unex}{int(unexchanged_krw):,}원 / 확정 {sign_lock}{int(locked_in_krw):,}원"
             
             b1, b2, b3, b4 = st.columns(4)
             with b1: 
@@ -950,6 +994,7 @@ else:
         
         st.divider()
         st.markdown("### 2. 핵심 매크로 지표 (실시간 숫자 뷰)")
+        
         krw = macro_cache['USDKRW']
         tnx = macro_cache['TNX']
         wti = macro_cache['WTI']
