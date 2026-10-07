@@ -13,7 +13,7 @@ import math
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V5.27: 섹터/그룹별 기여도 완벽 복구 및 V4.14 정밀 타격 엔진 통합")
+st.write("V5.28: 데이마켓(Day Market) 상태 표시 적용 및 무결점 전체 기능 통합")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -380,7 +380,7 @@ else:
                 price_basis_label = "실시간 애프터 마켓 가격"
                 change_label = "오늘의 변동-애프터 마켓"
             else:
-                m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
+                m_state = "⚪ 데이마켓 진행 중 (시세 표출: 직전 애프터마켓 최종가)"
                 price_basis_label = "애프터 마켓 최종 마감가"
                 change_label = "직전 애프터 누적"
                 is_market_closed = True
@@ -541,7 +541,6 @@ else:
                     st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_chg_dollar, False)})")
                     st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 대비 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**")
                     
-                    # [V5.27 핵심 복구] 섹터/그룹별 기여도 완벽 복원
                     st.write("---")
                     st.markdown("**🧩 섹터/그룹별 기여도**")
                     grp_agg = df_y.groupby('그룹').agg({'그제가치': 'sum', '어제가치': 'sum', '변동액': 'sum'}).reset_index()
@@ -565,7 +564,7 @@ else:
                 st.write("") 
                 st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
                 if is_market_closed or m_state.startswith("⚪"): 
-                    st.info("💡 프리마켓 개장 전이므로 실시간 급변동 감지가 비활성화됩니다.")
+                    st.info("💡 프리마켓 개장 전(또는 데이마켓 진행 중)이므로 실시간 급변동 감지가 비활성화됩니다.")
                 else:
                     active_df = df[df['당일 변동 (%)'] != 0.0]
                     if len(active_df) > 0:
