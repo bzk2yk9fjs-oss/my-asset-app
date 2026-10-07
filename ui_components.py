@@ -2,8 +2,34 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import streamlit.components.v1 as components
-from data_engine import get_color_text, get_macro_color_text
 
+# ==========================================
+# 1. 텍스트 컬러 변환 (UI 유틸리티 내장)
+# ==========================================
+def get_color_text(val, is_percent=True):
+    if pd.isna(val) or val is None: return ":gray[데이터 없음]"
+    sign = "+" if val > 0 else ""
+    fmt = f"{val:.2f}"
+    if is_percent: res = f"{sign}{fmt}%"
+    else: res = f"{sign}${abs(val):.2f}"
+    if val > 0: return f":green[{res}]"
+    elif val < 0: return f":red[{res}]"
+    else: return f":gray[{res}]"
+
+def get_macro_color_text(val, is_percent=True, prefix="", suffix=""):
+    if pd.isna(val) or val is None: return ":gray[데이터 없음]"
+    sign = "+" if val > 0 else ""
+    fmt = f"{val:.2f}"
+    if is_percent: res = f"{sign}{fmt}%"
+    else: res = f"{sign}{prefix}{abs(val):.2f}{suffix}"
+    if val > 0: return f":red[{res}]"
+    elif val < 0: return f":blue[{res}]"
+    else: return f":gray[{res}]"
+
+
+# ==========================================
+# 2. UI 렌더링 부품들
+# ==========================================
 def render_summary(total_value_usd, price_basis_label, total_daily_change_usd, change_label,
                    total_dividend_usd_all, total_all_time_usd_tr, total_profit_usd_only,
                    total_return_krw_tr, total_profit_krw_tr, total_value_krw, total_fx_gain_loss_krw):
@@ -76,7 +102,7 @@ def render_analysis_report(yesterday_recap, sp500_change, last_closed_date_str, 
             with c2: st.error(f"📉 **최대 구멍:** {btm['종목']} ({get_color_text(btm['어제변동률'])})")
             
     st.write("") 
-    st.subheader("⚡ 2. 실시간 흐름 파악 (당일 라이브)")
+    st.subheader("⚡ 2. 실 실시간 흐름 파악 (당일 라이브)")
     if is_market_closed or m_state.startswith("⚪"): 
         st.info("💡 프리마켓 개장 전(또는 데이마켓 진행 중)이므로 실시간 급변동 감지가 비활성화됩니다.")
     else:
