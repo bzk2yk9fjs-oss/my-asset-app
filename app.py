@@ -291,7 +291,9 @@ else:
         for _, row in df_trades.iterrows():
             ticker = str(row.get('종목', '')).strip().upper()
             trade_type = str(row.get('구분', '')).strip()
-            t_date_str = str(row.get('날짜', list(row.values())[0] if len(row.values()) > 0 else '')).strip()
+            
+            # 🚨 BUG FIX: Pandas .values 속성 호출 에러(.values() -> .iloc[0]) 우회
+            t_date_str = str(row.get('날짜', row.iloc[0] if not row.empty else '')).strip()
             
             try:
                 qty = float(str(row.get('수량', '0')).replace(',', '').replace('$', '').strip())
