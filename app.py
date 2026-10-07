@@ -624,7 +624,7 @@ else:
             if error_tickers: 
                 st.error(f"🚨 **[데이터 수신 오류]** 일시적인 야후 서버 지연으로 데이터 누락: **{', '.join(set(error_tickers))}**")
             
-            # --- V5.26 오리지널 상단 요약본 (델타 텍스트 100% 롤백) ---
+            # --- V5.26 오리지널 상단 요약본 ---
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
             col1, col2, col3, col4, col5 = st.columns(5)
             col1.metric(label=f"평가액(USD)-[{price_basis_label}]", value=f"${total_value_usd:,.2f}", delta=f"{total_daily_change_usd:,.2f} USD ({change_label})")
@@ -642,7 +642,6 @@ else:
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # --- V5.26 오리지널 데이터프레임 (컬럼 포맷 100% 롤백) ---
                 st.dataframe(df, use_container_width=True, hide_index=True,
                              column_config={
                                  "티커": "티커", 
@@ -661,7 +660,6 @@ else:
                              })
                 st.divider()
                 
-                # --- V5.26 오리지널 시황 분석 리포트 ---
                 st.header("📰 시황 분석 리포트 (투트랙)")
                 st.subheader(f"🌙 1. 전일장 마감 요약 (미국시간 {last_closed_date_str} 정규장 마감 기준)")
                 if yesterday_recap:
@@ -724,7 +722,7 @@ else:
             # ---------------------------------------------------------
             st.divider()
             st.header("⚖️ 최종 회계 결산: 찐 투자 성과표")
-            st.caption("환율 변동 리스크가 배제된 실제 주머니 확정 수익(Lock-in)과 순수 달러 잔고를 점검합니다. (※ 10월 7일 베이스라인 초기화 적용)")
+            st.caption("※ 10월 7일 초기화 베이스라인. [3칸]은 '미환전 달러손익(실시간 환율 반영)'과 '환전 완료된 확정 원화수익(Lock-in)'의 합산입니다.")
             
             # 🚀 V6.2: 완전체 MTM(Mark-to-Market) 회계 상계 공식 적용
             net_cash_flow_krw = total_withdrawn_krw + total_buy_krw - total_sold_principal_krw - total_deposit_krw
@@ -737,7 +735,7 @@ else:
             with b2: 
                 st.metric("[2칸] 총 누적 손익(USD)", f"${box2_profit_usd:,.2f}", "매도 차익 + 배당금")
             with b3: 
-                st.metric("[3칸] 총 확정수익(KRW)", f"{int(box3_profit_krw):,} 원", "MTM 환전 상계 완료")
+                st.metric("[3칸] 총 누적 손익(KRW)", f"{int(box3_profit_krw):,} 원", "미환전(실시간) + 확정(Lock-in) 합산")
             with b4: 
                 st.metric("[4칸] 미환전 달러 잔고(USD)", f"${usd_cash_balance:,.2f}", "증권사 예수금과 100% 일치", delta_color="off")
 
