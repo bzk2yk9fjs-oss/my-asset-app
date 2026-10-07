@@ -10,10 +10,17 @@ import pytz
 import requests
 import math
 
+# ==========================================
+# 0. 계좌 초기화 설정 (Baseline Reset)
+# ==========================================
+# 지정된 날짜 이전의 수익, 배당, 환전 내역은 0으로 무시하고 포트폴리오 평단가만 계산합니다.
+MEASURE_START_DATE = datetime.date(2026, 10, 7)
+INITIAL_USD_BALANCE = 126.77  # 10월 7일 기준 미환전 달러 잔고 초기값
+
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V6.1: V5.26 디테일 100% 롤백 + 최하단 찐 투자 성과표(환전 Lock-in) 완벽 통합본")
+st.write("V6.1: V5.26 디테일 100% 롤백 + 최하단 찐 투자 성과표(환전 Lock-in & 초기화) 완벽 통합본")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -42,7 +49,7 @@ yf_session.mount("https://", adapter)
 yf_session.mount("http://", adapter)
 
 # ==========================================
-# 0. 스마트 한글 사전
+# 1. 스마트 한글 사전 및 캡슐화 구역
 # ==========================================
 KOR_NAMES = {
     'VOO': '뱅가드 S&P 500', 'SGOV': '미국 0-3개월 초단기채', 'KO': '코카콜라', 
@@ -50,24 +57,9 @@ KOR_NAMES = {
     'GOOGL': '알파벳 A', 'IBM': 'IBM', 'SPCX': '스페이스X', 
     'RGTI': '리게티 컴퓨팅', 'ARQQ': '아킷 퀀텀',
     'AAPL': '애플', 'MSFT': '마이크로소프트', 'AMZN': '아마존닷컴', 'NVDA': '엔비디아', 
-    'TSLA': '테슬라', 'META': '메타 플랫폼스', 'BRK.B': '버크셔 해서웨이', 'AVGO': '브로드컴', 
-    'TSM': 'TSMC', 'LLY': '일라이 릴리', 'JPM': 'JP모건 체이스', 'V': '비자', 
-    'XOM': '엑슨모빌', 'UNH': '유나이티드헬스', 'PG': '프록터 앤 갬블 (P&G)', 
-    'MA': '마스터카드', 'JNJ': '존슨앤존슨', 'HD': '홈디포', 'MRK': '머크', 'CVX': '쉐브론',
-    'SPY': 'SPDR S&P 500', 'QQQ': '인베스코 QQQ', 'DIA': 'SPDR 다우존스',
-    'SCHD': '슈왑 배당 ETF (SCHD)', 'JEPI': 'JP모건 커버드콜 (JEPI)', 'TLT': '미국 20년 이상 장기채',
-    'TQQQ': '프로셰어즈 TQQQ (나스닥 3X)', 'SQQQ': '프로셰어즈 SQQQ (인버스 3X)', 
-    'SOXL': '디렉시온 SOXL (반도체 3X)', 'SOXS': '디렉시온 SOXS (인버스 3X)',
-    'SSO': '프로셰어즈 SSO (S&P 500 2X)', 'UPRO': '프로셰어즈 UPRO (S&P 500 3X)',
-    'QLD': '프로셰어즈 QLD (나스닥 2X)', 'SOXX': 'iShares 반도체 ETF', 'USD': '프로셰어즈 반도체 2X',
-    'SNXX': '트레이더 샌디스크 2X', 'NVDL': '그래니트셰어즈 엔비디아 2X', 
-    'TSLL': '디렉시온 테슬라 1.5X', 'CONL': '그래니트셰어즈 코인베이스 2X',
-    'LEU': '센트러스 에너지'
+    'TSLA': '테슬라', 'META': '메타 플랫폼스'
 }
 
-# ==========================================
-# 1. 백엔드 데이터베이스 & 캐시 캡슐화 구역
-# ==========================================
 def get_color_text(val, is_percent=True):
     if pd.isna(val) or val is None: return ":gray[데이터 없음]"
     sign = "+" if val > 0 else ""
@@ -95,7 +87,7 @@ def load_data():
         gc = gspread.service_account_from_dict(creds_dict)
         sheet = gc.open("내 주식 장부").sheet1
         return pd.DataFrame(sheet.get_all_records())
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 def add_trade(date_str, ticker, trade_type, qty, price, fx, group):
@@ -121,8 +113,7 @@ def get_macro_data():
             if math.isnan(prev): prev = 0.0
             
             if key == "TNX" and live > 10:
-                live /= 10
-                prev /= 10
+                live /= 10; prev /= 10
             change = live - prev
             pct = (change / prev) * 100 if prev > 0 else 0.0
             macros[key] = {"live": live, "change": change, "pct": pct}
@@ -150,14 +141,11 @@ def fetch_market_data(tickers_tuple):
         
     market_data['trading_dates'] = trading_dates
     market_data['sp500_reg'] = sp500_reg
-    market_data['sp500_5m'] = sp500_5m
 
     for tk in tickers_tuple:
         tk_obj = yf.Ticker(tk, session=yf_session)
-        
         try: df_1d = tk_obj.history(period="15d", interval="1d")
         except: df_1d = pd.DataFrame()
-        
         try: df_5m = tk_obj.history(period="15d", interval="5m", prepost=True)
         except: df_5m = pd.DataFrame()
         
@@ -165,7 +153,6 @@ def fetch_market_data(tickers_tuple):
             if df_1d.index.tz is None: df_1d.index = df_1d.index.tz_localize(ny_tz)
             else: df_1d.index = df_1d.index.tz_convert(ny_tz)
             df_1d['date'] = df_1d.index.date
-            
         if not df_5m.empty:
             if df_5m.index.tz is None: df_5m.index = df_5m.index.tz_localize('UTC').tz_convert(ny_tz)
             else: df_5m.index = df_5m.index.tz_convert(ny_tz)
@@ -215,7 +202,6 @@ current_live_fx = raw_live_fx if raw_live_fx > 0 else 1350.0
 
 with st.sidebar:
     st.header("⚡ 스마트 트레이딩 룸")
-    
     action_mode = st.radio("📝 작업 선택", ["📈 주식 매매 기록", "💰 배당금 수령 기록", "💵 환전/입출금 기록"], horizontal=True)
     
     if action_mode == "📈 주식 매매 기록":
@@ -223,7 +209,7 @@ with st.sidebar:
         with st.form(key='trade_form'):
             t_date = st.date_input("체결 날짜", datetime.date.today())
             selected_option = st.selectbox("🔍 종목 티커/회사명 검색", all_us_tickers)
-            t_ticker = st.text_input("티커 직접 입력 (예: RGTI)").upper().strip() if selected_option == "직접 입력 (티커 수동 입력)" else selected_option.split(" | ")[0].strip()
+            t_ticker = st.text_input("티커 직접 입력").upper().strip() if "직접 입력" in selected_option else selected_option.split(" | ")[0].strip()
             t_type = st.selectbox("구분", ["매수", "매도"])
             col_qty, col_price = st.columns(2)
             with col_qty: t_qty = st.number_input("체결 수량", value=0.00, min_value=0.00, format="%.4f", step=1.0)
@@ -234,42 +220,28 @@ with st.sidebar:
             if st.form_submit_button(label="장부에 즉시 기록"):
                 if t_ticker and t_qty > 0 and t_price > 0:
                     current_trade_hash = f"{t_date}_{t_ticker}_{t_type}_{t_qty}_{t_price}"
-                    if current_trade_hash == st.session_state['last_trade_hash']:
-                        st.warning("⚠️ 중복 클릭이 감지되었습니다.")
-                    else:
-                        with st.spinner("구글 시트 연동 중..."):
-                            if add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_fx, t_group):
-                                st.session_state['last_trade_hash'] = current_trade_hash
-                                st.success(f"[{t_ticker}] 매매 기록 완료!")
-                                load_data.clear(); fetch_market_data.clear()
-                                st.rerun()
-                            else: st.error("기록 실패.")
-                else: st.warning("수량과 가격을 정확히 입력하세요.")
-                
+                    if current_trade_hash != st.session_state['last_trade_hash']:
+                        if add_trade(t_date, t_ticker, t_type, t_qty, t_price, t_fx, t_group):
+                            st.session_state['last_trade_hash'] = current_trade_hash
+                            st.success(f"[{t_ticker}] 매매 기록 완료!"); load_data.clear(); fetch_market_data.clear(); st.rerun()
+
     elif action_mode == "💰 배당금 수령 기록":
         st.caption("세금이 공제된 실제 입금액(세후 배당금)을 입력하세요.")
         with st.form(key='dividend_form'):
             d_date = st.date_input("입금 날짜", datetime.date.today())
             selected_option = st.selectbox("🔍 배당금 지급 종목", all_us_tickers)
-            d_ticker = st.text_input("티커 직접 입력 (예: KO)").upper().strip() if selected_option == "직접 입력 (티커 수동 입력)" else selected_option.split(" | ")[0].strip()
+            d_ticker = st.text_input("티커 직접 입력").upper().strip() if "직접 입력" in selected_option else selected_option.split(" | ")[0].strip()
             d_amount = st.number_input("세후 입금액 ($)", value=0.00, min_value=0.00, format="%.2f", step=1.0)
             d_fx = st.number_input("입금 당시 환율 (원)", value=float(current_live_fx), min_value=0.00, format="%.2f", step=1.0)
             
             if st.form_submit_button(label="배당금 장부에 추가"):
                 if d_ticker and d_amount > 0:
                     current_div_hash = f"{d_date}_{d_ticker}_배당_{d_amount}"
-                    if current_div_hash == st.session_state['last_trade_hash']:
-                        st.warning("⚠️ 중복 클릭이 감지되었습니다.")
-                    else:
-                        with st.spinner("구글 시트 연동 중..."):
-                            if add_trade(d_date, d_ticker, "배당", 0.0, d_amount, d_fx, "배당기록"):
-                                st.session_state['last_trade_hash'] = current_div_hash
-                                st.success(f"[{d_ticker}] 배당금 ${d_amount:.2f} 기록 완료!")
-                                load_data.clear(); fetch_market_data.clear()
-                                st.rerun()
-                            else: st.error("기록 실패.")
-                else: st.warning("입금액을 확인하세요.")
-                
+                    if current_div_hash != st.session_state['last_trade_hash']:
+                        if add_trade(d_date, d_ticker, "배당", 0.0, d_amount, d_fx, "배당기록"):
+                            st.session_state['last_trade_hash'] = current_div_hash
+                            st.success(f"[{d_ticker}] 배당금 ${d_amount:.2f} 기록 완료!"); load_data.clear(); fetch_market_data.clear(); st.rerun()
+
     elif action_mode == "💵 환전/입출금 기록":
         st.caption("➕입금(원화->달러 증가) / ➖출금(달러->원화 및 환차익 Lock-in)")
         with st.form(key='fx_form'):
@@ -281,67 +253,82 @@ with st.sidebar:
             if st.form_submit_button(label="환전 기록 추가"):
                 if fx_usd_amount > 0 and fx_rate > 0:
                     current_fx_hash = f"{fx_date}_{fx_type}_{fx_usd_amount}_{fx_rate}"
-                    if current_fx_hash == st.session_state['last_trade_hash']:
-                        st.warning("⚠️ 중복 클릭이 감지되었습니다.")
-                    else:
-                        with st.spinner("구글 시트 연동 중..."):
-                            if add_trade(fx_date, "USD", fx_type, 0.0, fx_usd_amount, fx_rate, "환전기록"):
-                                st.session_state['last_trade_hash'] = current_fx_hash
-                                st.success(f"[{fx_type}] ${fx_usd_amount:,.2f} 기록 완료!")
-                                load_data.clear(); fetch_market_data.clear()
-                                st.rerun()
-                            else: st.error("기록 실패.")
-                else: st.warning("금액과 환율을 확인하세요.")
+                    if current_fx_hash != st.session_state['last_trade_hash']:
+                        if add_trade(fx_date, "USD", fx_type, 0.0, fx_usd_amount, fx_rate, "환전기록"):
+                            st.session_state['last_trade_hash'] = current_fx_hash
+                            st.success(f"[{fx_type}] ${fx_usd_amount:,.2f} 기록 완료!"); load_data.clear(); fetch_market_data.clear(); st.rerun()
 
 # ==========================================
-# 3. 프론트엔드 대시보드 렌더링
+# 3. 메인 대시보드 렌더링
 # ==========================================
 df_trades = load_data()
 
 if df_trades.empty:
-    st.warning("장부 데이터가 비어있습니다. 사이드바에서 매매/배당 기록을 추가해주세요.")
+    st.warning("장부 데이터가 비어있습니다. 사이드바에서 기록을 추가해주세요.")
 else:
-    # 🚨 버그 수정 완료: 빈 문자열로 덮어씌워져 VOO가 '기타'로 빠지던 현상 차단
-    group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)', 'LEU': '기타 (Others)'}
+    group_map = {'VOO': '코어 (Core)', 'SGOV': '코어 (Core)', 'KO': '방어 (Defensive)', 'BAC': '방어 (Defensive)', 'NEE': '방어 (Defensive)', 'LMT': '방어 (Defensive)', 'IBM': '우량주 (Blue Chip)', 'SPCX': '우량주 (Blue Chip)', 'GOOGL': '우량주 (Blue Chip)', 'RGTI': '모험주 (Adventure)', 'ARQQ': '모험주 (Adventure)'}
     
     if '그룹' in df_trades.columns:
         for _, row in df_trades.iterrows():
             tk = str(row.get('종목', '')).strip().upper()
             grp = str(row.get('그룹', '')).strip()
-            # 빈칸 방어 코드 및 환전기록 무시
             if tk and grp and grp not in ["배당기록", "환전기록"]: 
                 group_map[tk] = normalize_category(grp)
                 
-    def get_category(ticker): 
-        cat = group_map.get(ticker.upper(), '기타 (Others)')
-        return normalize_category(cat)
+    def get_category(ticker): return normalize_category(group_map.get(ticker.upper(), '기타 (Others)'))
 
     tab1, tab2 = st.tabs(["💰 내 자산 대시보드", "🌍 매크로 종합 상황판"])
     
     with tab1:
-        # V6.1 락인 회계 변수
-        total_deposit_usd = 0.0
-        total_withdrawn_usd = 0.0
+        # 🚀 현금흐름 및 락인 회계 변수
+        total_deposit_usd, total_withdrawn_usd = 0.0, 0.0
         lock_in_adjustment = 0.0
-        total_buy_usd = 0.0
-        total_sold_usd = 0.0
+        total_buy_usd, total_sold_usd = 0.0, 0.0
         realized_profit_usd = 0.0
-        total_sold_principal_usd = 0.0
-        total_sold_principal_krw = 0.0
+        total_sold_principal_usd, total_sold_principal_krw = 0.0, 0.0
 
         portfolio = {}
         for _, row in df_trades.iterrows():
-            ticker, trade_type = str(row.get('종목', '')).strip().upper(), str(row.get('구분', '')).strip()
+            ticker = str(row.get('종목', '')).strip().upper()
+            trade_type = str(row.get('구분', '')).strip()
+            t_date_str = str(row.get('날짜', list(row.values())[0] if len(row.values()) > 0 else '')).strip()
+            
             try:
-                raw_qty = str(row.get('수량', '0')).replace(',', '').replace('$', '').strip()
-                raw_price = str(row.get('가격($)', '0')).replace(',', '').replace('$', '').strip()
-                raw_fx_val = str(row.get('환율', '')).replace(',', '').replace('$', '').strip()
-                
-                qty = float(raw_qty) if raw_qty else 0.0
-                price = float(raw_price) if raw_price else 0.0
-                fx = float(raw_fx_val) if raw_fx_val else (current_live_fx if current_live_fx > 0 else 1350.0)
+                qty = float(str(row.get('수량', '0')).replace(',', '').replace('$', '').strip())
+                price = float(str(row.get('가격($)', '0')).replace(',', '').replace('$', '').strip())
+                fx = float(str(row.get('환율', '0')).replace(',', '').replace('$', '').strip())
+                if fx == 0: fx = current_live_fx
             except: continue
             
+            # 🚀 날짜 파싱 및 기준일(10/7) 검증
+            try:
+                t_date_obj = pd.to_datetime(t_date_str).date()
+            except:
+                t_date_obj = datetime.date.min
+                
+            is_past_trade = t_date_obj < MEASURE_START_DATE
+            
+            # 🚀 과거 데이터는 오직 '보유 수량/평단가' 뼈대만 맞추고 연산(수익, 달러잔고) 패스
+            if is_past_trade:
+                if trade_type in ['달러 입금', '달러 출금', '배당']:
+                    continue
+                    
+                if ticker not in portfolio: 
+                    portfolio[ticker] = {'수량': 0.0, '총투자금USD': 0.0, '총투자금KRW': 0.0, '총배당USD': 0.0, '총배당KRW': 0.0}
+                    
+                if trade_type == '매수':
+                    portfolio[ticker]['수량'] += qty
+                    portfolio[ticker]['총투자금USD'] += (qty * price)
+                    portfolio[ticker]['총투자금KRW'] += (qty * price * fx)
+                elif trade_type == '매도' and portfolio[ticker]['수량'] > 0:
+                    avg_usd = portfolio[ticker]['총투자금USD'] / portfolio[ticker]['수량']
+                    avg_krw = portfolio[ticker]['총투자금KRW'] / portfolio[ticker]['수량']
+                    portfolio[ticker]['수량'] -= qty
+                    portfolio[ticker]['총투자금USD'] -= (qty * avg_usd)
+                    portfolio[ticker]['총투자금KRW'] -= (qty * avg_krw)
+                continue
+            
+            # 🚀 기준일(오늘) 이후의 실시간 정상 연산
             if trade_type == '달러 입금':
                 total_deposit_usd += price
                 continue
@@ -378,7 +365,9 @@ else:
         tickers_tuple = tuple(portfolio.keys())
         
         total_dividend_usd_all = sum(v['총배당USD'] for v in portfolio.values())
-        usd_cash_balance = (total_deposit_usd + total_sold_usd + total_dividend_usd_all) - (total_buy_usd + total_withdrawn_usd)
+        
+        # 🚀 미환전 달러 예수금 = 초기 고정 세팅값(126.77$) + 이후의 달러 증감분
+        usd_cash_balance = INITIAL_USD_BALANCE + (total_deposit_usd + total_sold_usd + total_dividend_usd_all) - (total_buy_usd + total_withdrawn_usd)
 
         with st.spinner('V4.14 정밀 타격 엔진 가동 중...'):
             fetched_data = fetch_market_data(tickers_tuple)
@@ -439,6 +428,9 @@ else:
                 
             market_time_info = f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}"
 
+            group_y_val = {grp: 0.0 for grp in ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]}
+            group_dby_val = {grp: 0.0 for grp in ["코어 (Core)", "방어 (Defensive)", "우량주 (Blue Chip)", "모험주 (Adventure)", "모멘텀 (Momentum)", "기타 (Others)"]}
+
             for ticker, info in portfolio.items():
                 shares = float(info['수량'])
                 avg_usd_price = float(info['총투자금USD']) / shares if shares > 0 else 0
@@ -450,20 +442,16 @@ else:
                 df_1d = stock_data['df_1d']
                 df_5m = stock_data['df_5m']
                 
-                if not df_5m.empty:
-                    df_5m_reg = df_5m.between_time('09:30', '16:00')
-                else:
-                    df_5m_reg = pd.DataFrame()
+                if not df_5m.empty: df_5m_reg = df_5m.between_time('09:30', '16:00')
+                else: df_5m_reg = pd.DataFrame()
                     
                 def get_exact_close(d_target):
                     if not df_1d.empty and 'date' in df_1d.columns:
                         match_1d = df_1d[df_1d['date'] == d_target]
-                        if not match_1d.empty and pd.notna(match_1d['Close'].iloc[-1]):
-                            return float(match_1d['Close'].iloc[-1])
+                        if not match_1d.empty and pd.notna(match_1d['Close'].iloc[-1]): return float(match_1d['Close'].iloc[-1])
                     if not df_5m_reg.empty:
                         match_5m = df_5m_reg[df_5m_reg.index.date == d_target]
-                        if not match_5m.empty and pd.notna(match_5m['Close'].iloc[-1]):
-                            return float(match_5m['Close'].iloc[-1])
+                        if not match_5m.empty and pd.notna(match_5m['Close'].iloc[-1]): return float(match_5m['Close'].iloc[-1])
                     return 0.0
 
                 t_close = get_exact_close(target_date)
@@ -472,8 +460,7 @@ else:
                 if not df_5m.empty:
                     valid_live = df_5m.dropna(subset=['Close'])
                     c_price = float(valid_live['Close'].iloc[-1]) if not valid_live.empty else t_close
-                else:
-                    c_price = t_close
+                else: c_price = t_close
                     
                 if c_price == 0.0 or t_close == 0.0:
                     if shares > 0: error_tickers.append(ticker)
@@ -488,6 +475,8 @@ else:
                         "종목": kor_name, "그룹": category, "어제변동률": y_change,
                         "어제가치": y_value, "그제가치": dby_value, "변동액": y_value - dby_value
                     })
+                    group_y_val[category] += y_value
+                    group_dby_val[category] += dby_value
                 
                 value_usd = c_price * shares
                 change_dollar = (c_price - t_close) * shares if t_close > 0 else 0.0
@@ -512,7 +501,6 @@ else:
                 total_invested_usd += float(info['총투자금USD'])
                 total_fx_gain_loss_krw += total_item_fx_gain
                 
-                # 🚨 버그 수정 완료: V5.26 오리지널 딕셔너리 구조 100% 롤백
                 if shares > 0 or div_usd > 0:
                     results.append({
                         "티커": ticker, "종목명": kor_name, "그룹": category, "보유 수량": shares,
@@ -546,12 +534,10 @@ else:
             total_profit_krw_tr = (total_value_krw + total_dividend_current_krw) - total_invested_krw if current_live_fx > 0 else 0.0
             total_return_krw_tr = (total_profit_krw_tr / total_invested_krw) * 100 if (total_invested_krw > 0 and current_live_fx > 0) else 0.0
 
-            # 🚨 버그 수정 완료: 상태 정보 및 에러 출력 복구
             st.info(market_time_info)
             if current_live_fx == 0.0: st.error("🚨 **[환율 데이터 오류]** 실시간 환율 수신 불가.")
             if error_tickers: st.error(f"🚨 **[데이터 수신 오류]** 일시적인 야후 서버 지연으로 데이터 누락: **{', '.join(set(error_tickers))}**")
             
-            # 🚨 버그 수정 완료: V5.26 델타 텍스트 및 레이아웃 100% 롤백
             st.subheader("💰 계좌 총괄 요약 (Total Summary)")
             col1, col2, col3, col4, col5 = st.columns(5)
             col1.metric(label=f"평가액(USD)-[{price_basis_label}]", value=f"${total_value_usd:,.2f}", delta=f"{total_daily_change_usd:,.2f} USD ({change_label})")
@@ -563,13 +549,12 @@ else:
             
             if results:
                 df = pd.DataFrame(results).sort_values(by="비중", ascending=False).reset_index(drop=True)
-                st.subheader("📊 포트폴리오 상세 (주식 성과 및 누적 배당 분리)")
+                st.subheader("📊 포트폴리오 비중")
                 fig = px.pie(df, values='평가액 ($)', names='그룹', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # 🚨 버그 수정 완료: V5.26 전용 데이터프레임 컬럼 포맷팅 완벽 롤백
                 st.dataframe(df, use_container_width=True, hide_index=True,
                              column_config={"티커": "티커", "종목명": "종목명", "그룹": "자산군", 
                                             "보유 수량": st.column_config.NumberColumn("수량", format="%.4f"),
@@ -594,22 +579,20 @@ else:
                     tot_chg_pct = (tot_chg_dollar / tot_dby * 100) if tot_dby > 0 else 0.0
                     outperform = tot_chg_pct - sp500_change
                     
-                    st.markdown(f"**📌 계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_chg_dollar, False)})")
-                    st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 대비 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**")
+                    st.markdown(f"📌 **계좌 총괄 성적:** 전일 대비 **{get_color_text(tot_chg_pct)}** ({get_color_text(tot_chg_dollar, False)})")
+                    st.write(f"👉 시장(S&P 500: {get_color_text(sp500_change)}) 흐름 대비 내 자산 배분이 **{abs(outperform):.2f}%p {'상회' if outperform > 0 else '하회'}**했습니다.")
                     
                     st.write("---")
-                    st.markdown("**🧩 섹터/그룹별 기여도**")
-                    group_totals_y = df_y.groupby('그룹')['어제가치'].sum()
-                    group_totals_dby = df_y.groupby('그룹')['그제가치'].sum()
-                    group_pcts = []
-                    for g in group_totals_dby.index:
-                        if group_totals_dby[g] > 0:
-                            g_pct = ((group_totals_y[g] - group_totals_dby[g]) / group_totals_dby[g]) * 100
-                            group_pcts.append(f"{g.split(' ')[0]} {get_color_text(g_pct)}")
-                    st.write(" | ".join(group_pcts))
-
+                    st.markdown("🧩 **섹터/그룹별 기여도**")
+                    grp_strs = []
+                    for g_name, g_dby in group_dby_val.items():
+                        if g_dby > 0:
+                            g_chg = ((group_y_val[g_name] - g_dby) / g_dby) * 100
+                            grp_strs.append(f"{g_name.split(' ')[0]} {get_color_text(g_chg)}")
+                    if grp_strs: st.write(" | ".join(grp_strs))
+                    
                     st.write("---")
-                    st.markdown("**🏆 포트폴리오 양극단 특징주**")
+                    st.markdown("🏆 **포트폴리오 양극단 특징주**")
                     valid_df_y = df_y.dropna(subset=['어제변동률'])
                     if not valid_df_y.empty:
                         top, btm = valid_df_y.loc[valid_df_y['어제변동률'].idxmax()], valid_df_y.loc[valid_df_y['어제변동률'].idxmin()]
@@ -645,7 +628,7 @@ else:
             # ---------------------------------------------------------
             st.divider()
             st.header("⚖️ 최종 회계 결산: 찐 투자 성과표")
-            st.caption("환율 변동 리스크가 배제된 실제 주머니 확정 수익(Lock-in)과 순수 달러 잔고를 점검합니다.")
+            st.caption(f"환율 변동 리스크가 배제된 확정 수익(Lock-in)과 순수 달러 잔고를 점검합니다. (※ 10월 7일 베이스라인 초기화 적용됨)")
             
             box2_profit_usd = realized_profit_usd + total_dividend_usd_all
             base_realized_krw = (box2_profit_usd * current_live_fx) + (total_sold_principal_usd * current_live_fx - total_sold_principal_krw)
