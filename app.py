@@ -20,7 +20,7 @@ INITIAL_USD_BALANCE = 126.77  # 10월 7일 기준 미환전 달러 예수금 초
 st.set_page_config(page_title="한결 퀀트 포트폴리오", layout="wide", page_icon="📈")
 
 st.title("📈 한결 퀀트 & 매크로 자산관리 비서")
-st.write("V6.4: V5.26 오리지널 디테일 무압축 100% 복구 + 찐 투자성과표(MTM 상계 엔진) 완전체")
+st.write("V6.5: V6.4 무압축 100% 보존 + 미국 증시 썸머타임 해제(동절기 KST 거래시간) 완벽 반영본")
 
 # ==========================================
 # 세션 스테이트 초기화 (중복 클릭 방지용)
@@ -246,7 +246,8 @@ def fetch_market_data(tickers_tuple):
         
         if not df_1d.empty:
             if df_1d.index.tz is None: 
-                df_1d.index = df_1d.index.tz_localize(ny_tz)
+                # 썸머타임 전환기(DST 해제/적용) 경계에서 발생하는 AmbiguousTimeError 방지
+                df_1d.index = df_1d.index.tz_localize(ny_tz, ambiguous='infer', nonexistent='shift_forward')
             else: 
                 df_1d.index = df_1d.index.tz_convert(ny_tz)
             df_1d['date'] = df_1d.index.date
@@ -622,6 +623,21 @@ else:
             now_kr = datetime.datetime.now(pytz.timezone('Asia/Seoul'))
             now_ny = datetime.datetime.now(ny_tz)
             
+            # 🚀 썸머타임(DST) 자동 감지 및 한국시간(KST) 거래시간 안내 매핑
+            is_dst = bool(now_ny.dst())
+            if is_dst:
+                dst_status_str = "☀️ 썸머타임 적용 중 (EDT, UTC-4)"
+                pre_kst_str = "17:00~22:30"
+                reg_kst_str = "22:30~05:00"
+                after_kst_str = "05:00~08:50(09:00)"
+                day_kst_str = "09:00~17:00 (데이마켓 09:00~16:50)"
+            else:
+                dst_status_str = "❄️ 썸머타임 해제 / 동절기 표준시 (EST, UTC-5)"
+                pre_kst_str = "18:00~23:30"
+                reg_kst_str = "23:30~06:00"
+                after_kst_str = "06:00~09:50(10:00)"
+                day_kst_str = "10:00~18:00 (데이마켓 10:00~17:50)"
+            
             if now_ny.time() >= datetime.time(16, 0):
                 valid_dates = [d for d in trading_dates if d <= now_ny.date()]
             else:
@@ -639,30 +655,34 @@ else:
             t_val = now_ny.hour + now_ny.minute / 60.0
             is_market_closed = False
             
-            if now_ny.weekday() >= 5: 
-                m_state = "⚫ 주말 (애프터 마켓 최종 마감 가격 유지)"
+            # 금요일 애프터마켓 종료(미국시간 금요일 20:00 = 동절기 한국시간 토요일 10:00) 이후부터 주말 전체 휴장 처리
+            if now_ny.weekday() >= 5 or (now_ny.weekday() == 4 and t_val >= 20.0): 
+                m_state = f"⚫ 주말 휴장 (애프터 마켓 최종 마감 가격 유지 | KST 애프터 {after_kst_str} 종료)"
                 price_basis_label = "애프터 마켓 최종 마감가"
                 change_label = "직전 애프터 누적"
                 is_market_closed = True
             elif 4.0 <= t_val < 9.5:
-                m_state = "🟡 프리마켓 진행 중"
+                m_state = f"🟡 프리마켓 진행 중 (KST {pre_kst_str})"
                 price_basis_label = "실시간 프리마켓 가격"
                 change_label = "오늘의 변동-프리마켓"
             elif 9.5 <= t_val < 16.0:
-                m_state = "🟢 본장 진행 중"
+                m_state = f"🟢 본장(정규장) 진행 중 (KST {reg_kst_str})"
                 price_basis_label = "실시간 본장 가격"
                 change_label = "오늘의 변동-본장"
             elif 16.0 <= t_val < 20.0:
-                m_state = "🔵 애프터 마켓 진행 중"
+                m_state = f"🔵 애프터 마켓 진행 중 (KST {after_kst_str})"
                 price_basis_label = "실시간 애프터 마켓 가격"
                 change_label = "오늘의 변동-애프터 마켓"
             else:
-                m_state = "⚫ 애프터 마감 (프리마켓 개장 전)"
+                m_state = f"⚫ 애프터 마감 / 프리마켓 개장 전 (KST {day_kst_str})"
                 price_basis_label = "애프터 마켓 최종 마감가"
                 change_label = "직전 애프터 누적"
                 is_market_closed = True
                 
-            market_time_info = f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST)\n\n**시장 상태:** {m_state}"
+            market_time_info = (
+                f"🕒 **조회 시점:** {now_kr.strftime('%Y년 %m월 %d일 %H:%M')} (KST) ｜ **{dst_status_str}**\n\n"
+                f"**시장 상태:** {m_state}"
+            )
 
             group_y_val = {
                 "코어 (Core)": 0.0, "방어 (Defensive)": 0.0, "우량주 (Blue Chip)": 0.0, 
